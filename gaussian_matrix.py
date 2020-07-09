@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 from torch.utils.cpp_extension import load
 import os
-import crf
 from torch.autograd import Function
 import torch.nn.functional as F
 import time
@@ -10,9 +9,13 @@ import numpy as np
 import concurrent.futures
 import torch.multiprocessing as mp
 import math
+import gpytorch
 #import multiprocessing as mp
 lattice = load(name="lattice",sources=[os.path.expanduser("~/depth-estimation/crf/lattice/lite/lattice.cpp")])
 latticefilter = lattice.filter
+
+
+
 
 class LatticeGaussian(nn.Module):
     def __init__(self,ref):
@@ -26,6 +29,7 @@ class LatticeGaussian(nn.Module):
 
     def forward(self,U):
         return LatticeFilter.apply(U,self.ref)# - U #usually substracts U: 0 along the diagonal.
+
 
 
 class BatchedAdjacency(nn.Module):
