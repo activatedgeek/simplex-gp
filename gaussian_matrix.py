@@ -11,7 +11,7 @@ import torch.multiprocessing as mp
 import math
 import gpytorch
 #import multiprocessing as mp
-lattice = load(name="lattice",sources=[os.path.expanduser("~/depth-estimation/crf/lattice/lite/lattice.cpp")])
+lattice = load(name="lattice",sources=["lattice.cpp"])
 latticefilter = lattice.filter
 
 
@@ -111,7 +111,7 @@ class BatchedLatticeFilter(Function):
                 if ctx.needs_input_grad[0]: grad_source = wg
                 s.append(time.time())
                 s = np.array(s)
-            print(f"{s[1:]-s[:-1]}")
+            #print(f"{s[1:]-s[:-1]}")
         return grad_source, grad_reference, None # num_threads needs no grad
 
 class LatticeFilter(Function):
@@ -158,7 +158,7 @@ class LatticeFilter(Function):
                 if ctx.needs_input_grad[0]: grad_source = wg
                 s.append(time.time())
                 s = np.array(s)
-            print(f"{s[1:]-s[:-1]}")
+            #print(f"{s[1:]-s[:-1]}")
         return grad_source, grad_reference
         
 

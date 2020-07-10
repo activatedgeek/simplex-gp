@@ -13,7 +13,7 @@ from gaussian_matrix import LatticeFilter
 
 class LazyBilateral(LazyTensor):
     def __init__(self,x):
-        super().__init__()
+        super().__init__(x)
         self.x = x
     def _matmul(self,V):
         return LatticeFilter.apply(V,self.x)
@@ -21,10 +21,12 @@ class LazyBilateral(LazyTensor):
         return torch.Size((self.x.shape[-2],self.x.shape[-2]))
     def _transpose_nonbatch(self):
         return self
+    def diag(self):
+        return torch.ones_like(self.x[...,0])
 
 class RectangularLazyBilateral(LazyTensor):
     def __init__(self,xin,xout):
-        super().__init__()
+        super().__init__(xin,xout)
         self.xin = xin
         self.xout = xout
     def _matmul(self,V):

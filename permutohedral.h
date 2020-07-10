@@ -12,7 +12,7 @@
 #include <sys/time.h>
 #endif
 #define at_float_type torch::kFloat32
-//#define printf //
+//#define //printf //
 using namespace std;
 typedef float float_type;
 //typedef at::kDouble at_float_type;
@@ -133,7 +133,7 @@ private:
   /* Grows the size of the hash table */
   void grow()
   {
-    printf("Resizing hash table\n");
+    //printf("Resizing hash table\n");
 
     size_t oldCapacity = capacity;
     capacity *= 2;
@@ -189,11 +189,11 @@ private:
 void arr_deleter(void *obj)
 {
 
-  if (obj != NULL)
-  {
-    //delete [] obj;
-    printf("Array object deleted :)");
-  }
+  // if (obj != NULL)
+  // {
+  //   //delete [] obj;
+  //   printf("Array object deleted :)");
+  // }
 }
 
 /***************************************************************/
@@ -230,7 +230,7 @@ public:
 
     // Splat into the lattice
     gettimeofday(t + 1, NULL);
-    printf("Splatting...\n");
+    //printf("Splatting...\n");
     float_type *arr_ref = new float_type[n * refChannels];
     float_type *arr_src = new float_type[n * srcChannels];
     auto ref_iter = ref.accessor<float_type, 2>();
@@ -245,8 +245,8 @@ public:
       for (int64_t c = 0; c < refChannels; ++c)
       {
         arr_ref[i * refChannels + c] = ref_iter[i][c];
-        if (i == (n - 1) && c == 0)
-          printf("%.3f\n", ref_iter[i][c]);
+        //if (i == (n - 1) && c == 0)
+          //printf("%.3f\n", ref_iter[i][c]);
       }
     }
     for (int64_t i = 0; i < n; ++i)
@@ -254,8 +254,8 @@ public:
       for (int64_t c = 0; c < srcChannels; ++c)
       {
         arr_src[i * srcChannels + c] = src_iter[i][c];
-        if (i == (n - 1) && c == 0)
-          printf("%.3f\n", src_iter[i][c]);
+        //if (i == (n - 1) && c == 0)
+          //printf("%.3f\n", src_iter[i][c]);
       }
     }
     // printf("%.3f \n",arr_ref[(n-1)*refChannels]);
@@ -286,12 +286,12 @@ public:
 
     // Blur the lattice
     gettimeofday(t + 2, NULL);
-    printf("Blurring...");
+    //printf("Blurring...");
     lattice.blur();
 
     // Slice from the lattice
     gettimeofday(t + 3, NULL);
-    printf("Slicing...\n");
+    //printf("Slicing...\n");
     lattice.beginSlice();
     float_type *outArray = new float_type[n * srcChannels];
     for (int i = 0; i < n * srcChannels; ++i)
@@ -347,7 +347,7 @@ public:
     gettimeofday(t + 4, NULL);
     const char *names[4] = {"Init  ", "Splat ", "Blur  ", "Slice "};
     for (int i = 1; i < 5; i++)
-      printf("%s: %3.3f s\n", names[i - 1], (t[i].tv_sec - t[i - 1].tv_sec) + (t[i].tv_usec - t[i - 1].tv_usec) / 1000000.0);
+     //printf("%s: %3.3f s\n", names[i - 1], (t[i].tv_sec - t[i - 1].tv_sec) + (t[i].tv_usec - t[i - 1].tv_usec) / 1000000.0);
 
     return output;
   }
@@ -554,8 +554,8 @@ public:
     // For each of d+1 axes,
     for (int j = 0; j <= d; j++)
     {
-      printf(" %d", j);
-      fflush(stdout);
+      //printf(" %d", j);
+      //fflush(stdout);
 
       // For each vertex in the lattice,
       for (int i = 0; i < hashTable.size(); i++)
@@ -607,7 +607,7 @@ public:
     {
       delete newValue;
     }
-    printf("\n");
+    //printf("\n");
 
     delete zero;
     delete neighbor1;
