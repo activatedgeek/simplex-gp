@@ -26,7 +26,7 @@ class LazyBilateral(LazyTensor):
 
 class RectangularLazyBilateral(LazyTensor):
     def __init__(self,xin,xout):
-        super().__init__(xin,xout)
+        super().__init__(xin, xout)
         self.xin = xin
         self.xout = xout
     def _matmul(self,V):
