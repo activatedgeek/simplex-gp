@@ -13,7 +13,7 @@ from gaussian_matrix import LatticeFilter
 
 class LazyBilateral(LazyTensor):
     def __init__(self,x):
-        super().__init__()
+        super().__init__(x)
         self.x = x
     def _matmul(self,V):
         return LatticeFilter.apply(V,self.x)
@@ -24,7 +24,7 @@ class LazyBilateral(LazyTensor):
 
 class RectangularLazyBilateral(LazyTensor):
     def __init__(self,xin,xout):
-        super().__init__()
+        super().__init__(xin, xout)
         self.xin = xin
         self.xout = xout
     def _matmul(self,V):
