@@ -11,7 +11,7 @@ import torch.multiprocessing as mp
 import math
 import gpytorch
 #import multiprocessing as mp
-lattice = load(name="lattice",sources=[os.path.expanduser("~/depth-estimation/crf/lattice/lite/lattice.cpp")])
+lattice = load(name="lattice",sources=[os.path.expanduser("./lattice.cpp")])
 latticefilter = lattice.filter
 
 
