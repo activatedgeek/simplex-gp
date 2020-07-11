@@ -1,13 +1,7 @@
-import math
 import torch
 import gpytorch
-from matplotlib import pyplot as plt
 from bilateral_kernel import BilateralKernel
-# Training data is 100 points in [0,1] inclusive regularly spaced
-#train_x = torch.linspace(0, 1, 100000)
-train_x = torch.randn(1000,2)
-# True function is sin(2*pi*x) with Gaussian noise
-train_y = (torch.sin(train_x * (2 * math.pi)) + torch.randn(train_x.size()) * math.sqrt(0.05)).sum(-1)
+from utils import UCIDataset
 
 class ExactGPModel(gpytorch.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood):
@@ -21,39 +15,65 @@ class ExactGPModel(gpytorch.models.ExactGP):
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
-# initialize likelihood and model
-likelihood = gpytorch.likelihoods.GaussianLikelihood()
-model = ExactGPModel(train_x, train_y, likelihood)
+device = "cuda"
+# these work find
+#datasets = ["pol", "elevators"]
+# these will cause OOM
+datasets = ["kin40k", "3droad"]
+train_datasets = UCIDataset.create(*datasets, mode="train", device=device, dtype=torch.float32)
+test_datasets = UCIDataset.create(*datasets, mode="test", device=device, dtype=torch.float32)
 
-# this is for running the notebook in our testing framework
-import os
-smoke_test = ('CI' in os.environ)
-training_iter = 2 if smoke_test else 200
+for train_dataset, test_dataset in zip(train_datasets, test_datasets):
+    train_x, train_y = train_dataset.x, train_dataset.y
+    test_x, test_y = test_dataset.x, test_dataset.y
+    print(f"Train: N={train_x.size(0)}  D={train_x.size(1)}")
 
+    x_mean = train_x.mean(0)
+    x_std = train_x.std(0) + 1e-6
 
-# Find optimal model hyperparameters
-model.train()
-likelihood.train()
+    y_mean = train_y.mean(0)
+    y_std = train_y.std(0) + 1e-6
 
-# Use the adam optimizer
-optimizer = torch.optim.Adam([
-    {'params': model.parameters()},  # Includes GaussianLikelihood parameters
-], lr=0.1)
+    train_x = (train_x - x_mean) / x_std
+    train_y = (train_y - y_mean) / y_std
 
-# "Loss" for GPs - the marginal log likelihood
-mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+    test_x = (test_x - x_mean) / x_std
+    test_y = (test_y - y_mean) / y_std
 
-for i in range(training_iter):
-    # Zero gradients from previous iteration
-    optimizer.zero_grad()
-    # Output from model
-    output = model(train_x)
-    # Calc loss and backprop gradients
-    loss = -mll(output, train_y)
-    loss.backward()
-    print('Iter %d/%d - Loss: %.3f   lengthscale: %.3f   noise: %.3f' % (
-        i + 1, training_iter, loss.item(),
-        model.covar_module.base_kernel.lengthscale.item(),
-        model.likelihood.noise.item()
-    ))
-    optimizer.step()
+    # initialize likelihood and model
+    likelihood = gpytorch.likelihoods.GaussianLikelihood()
+    model = ExactGPModel(train_x, train_y, likelihood)
+    model = model.to(device)
+
+    # Find optimal model hyperparameters
+    model.train()
+    likelihood.train()
+
+    # Use the adam optimizer
+    optimizer = torch.optim.Adam([
+        {'params': model.parameters()},  # Includes GaussianLikelihood parameters
+    ], lr=0.1)
+
+    # "Loss" for GPs - the marginal log likelihood
+    mll = gpytorch.mlls.ExactMarginalLogLikelihood(likelihood, model)
+
+    training_iter = 100
+    for i in range(training_iter):
+        # Zero gradients from previous iteration
+        optimizer.zero_grad()
+        # Output from model
+        output = model(train_x)
+        # Calc loss and backprop gradients
+        loss = -mll(output, train_y)
+        loss.backward()
+        print('Iter %d/%d - Loss: %.3f   lengthscale: %.3f   noise: %.3f' % (
+            i + 1, training_iter, loss.item(),
+            model.covar_module.base_kernel.lengthscale.item(),
+            model.likelihood.noise.item()
+        ))
+        optimizer.step()
+
+    model.eval()
+    with torch.no_grad():
+        pred_y = likelihood(model(test_x)).mean
+        print(f"RMSE: {(pred_y - test_y).pow(2).mean(0).sqrt()}")
