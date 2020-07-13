@@ -7,8 +7,7 @@ class ExactGPModel(gpytorch.models.ExactGP):
     def __init__(self, train_x, train_y, likelihood):
         super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
         self.mean_module = gpytorch.means.ConstantMean()
-        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())#BilateralKernel())
-        #self.covar_module = gpytorch.kernels.ScaleKernel(BilateralKernel())
+        self.covar_module = gpytorch.kernels.ScaleKernel(BilateralKernel())
 
     def forward(self, x):
         mean_x = self.mean_module(x)
@@ -16,10 +15,7 @@ class ExactGPModel(gpytorch.models.ExactGP):
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
 device = "cuda"
-# these work find
-#datasets = ["pol", "elevators"]
-# these will cause OOM
-datasets = ["kin40k", "3droad"]
+datasets = ["pol", "elevators"]
 train_datasets = UCIDataset.create(*datasets, mode="train", device=device, dtype=torch.float32)
 test_datasets = UCIDataset.create(*datasets, mode="test", device=device, dtype=torch.float32)
 
