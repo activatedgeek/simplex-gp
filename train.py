@@ -14,8 +14,8 @@ class ExactGPModel(gpytorch.models.ExactGP):
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
-device = "cuda"
-datasets = ["pol", "elevators"]
+device = "cpu"
+datasets = ["3droad", "elevators"]
 train_datasets = UCIDataset.create(*datasets, mode="train", device=device, dtype=torch.float32)
 test_datasets = UCIDataset.create(*datasets, mode="test", device=device, dtype=torch.float32)
 
