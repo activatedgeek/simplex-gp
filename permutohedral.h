@@ -189,11 +189,11 @@ private:
 void arr_deleter(void *obj)
 {
 
-  // if (obj != NULL)
-  // {
-  //   //delete [] obj;
-  //   printf("Array object deleted :)");
-  // }
+  if (obj != NULL)
+  {
+    delete [] obj;
+    //printf("Array object deleted :)");
+  }
 }
 
 /***************************************************************/

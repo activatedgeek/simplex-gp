@@ -4,10 +4,10 @@ from torch.utils.data import Dataset
 import torch
 from scipy.io import loadmat
 import itertools
-
+import os
 
 class UCIDataset(Dataset):
-    UCI_PATH = Path("/mnt/storage1/datasets/uci/")
+    UCI_PATH = Path(os.path.expanduser("~/datasets/uci/"))
 
     def __init__(
         self,
