@@ -49,7 +49,8 @@ class BilateralKernel(Kernel):
     def forward(self, x1, x2, diag=False,**kwargs):#what are the extra kwargs for??
         if diag==True:
             return torch.ones_like(x1[...,0])
-        if x1.eq(x2).all():
+        # TODO(sanyam): verify this change.
+        if x1.shape == x2.shape and x1.eq(x2).all():
             return LazyBilateral(x1.div(self.lengthscale))
         else:
             return RectangularLazyBilateral(x1.div(self.lengthscale),x2.div(self.lengthscale))

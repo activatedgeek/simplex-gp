@@ -74,7 +74,7 @@ class UCIDataset(Dataset):
 
         groups = {
             **{
-                "all": UCIDataset.all_dataset_paths(),
+                "all": UCIDataset.all_dataset_paths(uci_data_dir),
                 "small": get(
                     [
                         "challenger",
@@ -118,7 +118,7 @@ class UCIDataset(Dataset):
                 "huge": get(["houseelectric"]),
             },
             # Allow individual dataset names
-            **{p.stem: [p] for p in UCIDataset.all_dataset_paths()},
+            **{p.stem: [p] for p in UCIDataset.all_dataset_paths(uci_data_dir)},
         }
         datasets = itertools.chain.from_iterable([groups[g_or_n] for g_or_n in names])
         datasets = [UCIDataset(dataset_path, mode=mode, device=device, dtype=dtype) for dataset_path in datasets]

@@ -4,6 +4,7 @@ from torch.utils.tensorboard import SummaryWriter
 import gpytorch
 from tqdm.auto import tqdm
 import wandb
+from pathlib import Path
 
 from bi_gp.bilateral_kernel import BilateralKernel
 from utils import UCIDataset
@@ -30,19 +31,23 @@ class ExactGPModel(gpytorch.models.ExactGP):
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
 
-def main(dataset, epochs=100, lr=0.1, log_int=10, seed=None):
+def main(dataset, data_dir=UCIDataset.UCI_PATH, epochs=100, lr=0.1, log_int=10, seed=None):
     set_seeds(seed)
 
     wandb.init(tensorboard=True)
 
-    device = "gpu" if torch.cuda.is_available() else "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
     logger = SummaryWriter(log_dir=wandb.run.dir)
 
-    train_dataset = UCIDataset.create(dataset, mode="train", device=device)
-    test_dataset = UCIDataset.create(dataset, mode="test", device=device)
+    train_dataset = UCIDataset.create(dataset, uci_data_dir=Path(data_dir),
+                                      mode="train", device=device)
+    test_dataset = UCIDataset.create(dataset, uci_data_dir=Path(data_dir),
+                                     mode="test", device=device)
 
     train_x, train_y = train_dataset.x, train_dataset.y
     test_x, test_y = test_dataset.x, test_dataset.y
+
+    print(f'D={train_x.size(-1)}, Train N={train_x.size(0)}, Test N={test_x.size(0)}')
 
     x_mean = train_x.mean(0)
     x_std = train_x.std(0) + 1e-6
@@ -74,14 +79,13 @@ def main(dataset, epochs=100, lr=0.1, log_int=10, seed=None):
 
         optimizer.step()
 
-        if i % log_int == 0:
-            logger.add_scalar('train/loss', loss.detach().item(), global_step=i + 1)
+        logger.add_scalar('train/loss', loss.detach().item(), global_step=i + 1)
 
-            model.eval()
-            with torch.no_grad():
-                pred_y = likelihood(model(test_x)).mean
-                rmse = (pred_y - test_y).pow(2).mean(0).sqrt()
-                logger.add_scalar('test/rmse', rmse.item(), global_step=i + 1)
+        model.eval()
+        with torch.no_grad():
+            pred_y = model.likelihood(model(test_x))
+            rmse = (pred_y.mean - test_y).pow(2).mean(0).sqrt()
+            logger.add_scalar('test/rmse', rmse.item(), global_step=i + 1)
 
 
 if __name__ == "__main__":
