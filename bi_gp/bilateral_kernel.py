@@ -8,8 +8,9 @@ import time
 import numpy as np
 import math
 import gpytorch
-#import multiprocessing as mp
-from gaussian_matrix import LatticeFilter
+
+from bi_gp.gaussian_matrix import LatticeFilter
+
 
 class LazyBilateral(LazyTensor):
     def __init__(self,x):

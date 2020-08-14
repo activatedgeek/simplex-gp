@@ -48,7 +48,7 @@ class UCIDataset(Dataset):
 
     @staticmethod
     def all_dataset_paths(uci_data_dir: Path = UCI_PATH):
-        return list(uci_data_dir.glob("*/*.mat"))
+        return list(uci_data_dir.glob("*.mat"))
 
     @staticmethod
     def all_dataset_names(uci_data_dir: Path = UCI_PATH):

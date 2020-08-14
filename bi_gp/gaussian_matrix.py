@@ -11,11 +11,8 @@ import torch.multiprocessing as mp
 import math
 import gpytorch
 #import multiprocessing as mp
-lattice = load(name="lattice",sources=["lattice.cpp"])
+lattice = load(name="lattice",sources=[f'{os.path.dirname(__file__)}/lattice.cpp'])
 latticefilter = lattice.filter
-
-
-
 
 class LatticeGaussian(nn.Module):
     def __init__(self,ref):
