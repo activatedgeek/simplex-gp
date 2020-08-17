@@ -32,13 +32,13 @@ class RectangularLazyBilateral(LazyTensor):
         self.xout = xout
     def _matmul(self,V):
         n = V.shape[-2]
-        assert n==self.xin.shape[-2], f"mismatched shapes? {V.shape,self.xin.shape}"
-        x_large = torch.cat([self.xin,self.xout],dim=-2)
+        assert n==self.xout.shape[-2], f"mismatched shapes? {V.shape,self.xout.shape}"
+        x_large = torch.cat([self.xout,self.xin],dim=-2)
         V_large = torch.zeros(*V.shape[:-2],x_large.shape[-2],V.shape[-1],device=V.device,dtype=V.dtype)
         V_large[...,:n,:] += V
-        return LatticeFilter(V_large,x_large)[...,:n]
+        return LatticeFilter.apply(V_large,x_large)[...,n:,:]
     def _size(self):
-        return torch.Size((*self.xout.shape[:-1],self.xin.shape[-2]))
+        return torch.Size((*self.xin.shape[:-1],self.xout.shape[-2]))
     def _transpose_nonbatch(self):
         return RectangularLazyBilateral(self.xout,self.xin)
 

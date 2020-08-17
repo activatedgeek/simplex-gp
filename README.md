@@ -16,7 +16,7 @@ $ export PYTHONPATH="$(pwd):${PYTHONPATH}"
 
 ## Run
 
-Download the `mat` files for appropriate UCI dataset and then,
+Download the `mat` files for appropriate UCI dataset from [here](https://cims.nyu.edu/~andrewgw/pattern/). Then,
 
 ```
 $ python experiments/train.py --dataset=elevators --data-dir=<path/to/uci/data>
