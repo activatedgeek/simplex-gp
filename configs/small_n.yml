@@ -1,0 +1,36 @@
+## Datasets with small N.
+
+# method: random
+# method: bayes
+# metric:
+#   name: val/lik
+#   goal: maximize
+
+method: grid
+parameters:
+  dataset:
+    values:
+      - fertility
+      - servo
+      - cancer
+      - hardware
+      - yacht
+      - autompg
+      - housing
+      - concrete
+      - wine
+  lr:
+    # min: 0.001
+    # max: 1.0
+    value: 0.1
+  epochs:
+    value: 100
+  log_int:
+    value: 1
+## Modify as needed.
+program: experiments/train.py
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args}

@@ -55,7 +55,7 @@ class UCIDataset(Dataset):
         return [p.stem for p in UCIDataset.all_dataset_paths(uci_data_dir)]
 
     @staticmethod
-    def create(*names: Union[str, list], uci_data_dir: Path = UCI_PATH, mode="train", dtype=torch.float32, device="cpu") -> List:
+    def create(*names: Union[str, list], uci_data_dir: Path = None, mode="train", dtype=torch.float32, device="cpu") -> List:
         """Create one or more `UCIDataset`s from their names
 
         `names` can be the name of a group of datasets as listed below
@@ -68,6 +68,7 @@ class UCIDataset(Dataset):
             ```
 
         """
+        uci_data_dir = uci_data_dir or UCI_PATH
 
         def get(dataset_names: List[str]):
             return [(uci_data_dir / d / d).with_suffix(".mat") for d in dataset_names]

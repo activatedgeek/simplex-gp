@@ -31,7 +31,12 @@ class ExactGPModel(gpytorch.models.ExactGP):
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
 
-def main(dataset, data_dir=UCIDataset.UCI_PATH, epochs=100, lr=0.1, log_int=10, seed=None):
+def main(dataset=None, data_dir=None, epochs=100, lr=0.1, log_int=10, seed=None):
+    if data_dir is None and os.environ.get('DATADIR') is not None:
+        data_dir = Path(os.path.join(os.environ.get('DATADIR'), 'uci'))
+
+    assert dataset is not None, f'Select a dataset from "{data_dir}"'
+
     set_seeds(seed)
 
     wandb.init(tensorboard=True)
@@ -39,15 +44,15 @@ def main(dataset, data_dir=UCIDataset.UCI_PATH, epochs=100, lr=0.1, log_int=10, 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger = SummaryWriter(log_dir=wandb.run.dir)
 
-    train_dataset = UCIDataset.create(dataset, uci_data_dir=Path(data_dir),
+    train_dataset = UCIDataset.create(dataset, uci_data_dir=data_dir,
                                       mode="train", device=device)
-    test_dataset = UCIDataset.create(dataset, uci_data_dir=Path(data_dir),
+    test_dataset = UCIDataset.create(dataset, uci_data_dir=data_dir,
                                      mode="test", device=device)
 
     train_x, train_y = train_dataset.x, train_dataset.y
     test_x, test_y = test_dataset.x, test_dataset.y
 
-    print(f'D={train_x.size(-1)}, Train N={train_x.size(0)}, Test N={test_x.size(0)}')
+    print(f'"{dataset}": D = {train_x.size(-1)}, Train N = {train_x.size(0)}, Test N = {test_x.size(0)}')
 
     x_mean = train_x.mean(0)
     x_std = train_x.std(0) + 1e-6
