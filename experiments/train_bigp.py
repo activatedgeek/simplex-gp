@@ -1,34 +1,58 @@
 import os
 import torch
 from torch.utils.tensorboard import SummaryWriter
-import gpytorch
+import gpytorch as gp
 from tqdm.auto import tqdm
 import wandb
 from pathlib import Path
 
 from bi_gp.bilateral_kernel import BilateralKernel
-from utils import UCIDataset
+from utils import set_seeds, standardize, UCIDataset
 
 
-def set_seeds(seed=None):
-  if seed:
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-
-class ExactGPModel(gpytorch.models.ExactGP):
+class BilateralGPModel(gp.models.ExactGP):
     def __init__(self, train_x, train_y):
-        likelihood = gpytorch.likelihoods.GaussianLikelihood()
-        super(ExactGPModel, self).__init__(train_x, train_y, likelihood)
-        self.mean_module = gpytorch.means.ConstantMean()
-        self.covar_module = gpytorch.kernels.ScaleKernel(BilateralKernel())
+        likelihood = gp.likelihoods.GaussianLikelihood()
+        super().__init__(train_x, train_y, likelihood)
+        self.mean_module = gp.means.ConstantMean()
+        self.covar_module = gp.kernels.ScaleKernel(BilateralKernel())
 
     def forward(self, x):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
-        return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
+        return gp.distributions.MultivariateNormal(mean_x, covar_x)
+
+
+def train(x, y, model, mll, optim):
+  model.train()
+
+  optim.zero_grad()
+
+  output = model(x)
+
+  loss = -mll(output, y)
+
+  loss.backward()
+
+  optim.step()
+
+  return {
+    'train/ll': -loss.detach().item()
+  }
+
+
+def test(x, y, model, mll):
+  model.eval()
+
+  with torch.no_grad():
+    preds = model(x)
+
+  pred_y = model.likelihood(model(x))
+  rmse = (pred_y.mean - y).pow(2).mean(0).sqrt()
+
+  return {
+    'test/rmse': rmse.item()
+  }
 
 
 def main(dataset=None, data_dir=None, epochs=100, lr=0.1, log_int=10, seed=None):
@@ -51,46 +75,25 @@ def main(dataset=None, data_dir=None, epochs=100, lr=0.1, log_int=10, seed=None)
 
     train_x, train_y = train_dataset.x, train_dataset.y
     test_x, test_y = test_dataset.x, test_dataset.y
+    train_x, train_y, test_x, test_y = standardize(train_x, train_y, test_x, test_y)
 
     print(f'"{dataset}": D = {train_x.size(-1)}, Train N = {train_x.size(0)}, Test N = {test_x.size(0)}')
 
-    x_mean = train_x.mean(0)
-    x_std = train_x.std(0) + 1e-6
-
-    y_mean = train_y.mean(0)
-    y_std = train_y.std(0) + 1e-6
-
-    train_x = (train_x - x_mean) / x_std
-    train_y = (train_y - y_mean) / y_std
-
-    test_x = (test_x - x_mean) / x_std
-    test_y = (test_y - y_mean) / y_std
-
-    model = ExactGPModel(train_x, train_y).to(device)
+    model = BilateralGPModel(train_x, train_y).to(device)
+    mll = gp.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-    mll = gpytorch.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
-
     for i in tqdm(range(epochs)):
-        model.train()
+        train_dict = train(train_x, train_y, model, mll, optimizer)
+
+        for k, v in train_dict.items():
+            logger.add_scalar(k, v, global_step=i + 1)
         
-        optimizer.zero_grad()
+        test_dict = test(test_x, test_y, model, mll)
 
-        output = model(train_x)
-
-        loss = -mll(output, train_y)
-        loss.backward()
-
-        optimizer.step()
-
-        logger.add_scalar('train/loss', loss.detach().item(), global_step=i + 1)
-
-        model.eval()
-        with torch.no_grad():
-            pred_y = model.likelihood(model(test_x))
-            rmse = (pred_y.mean - test_y).pow(2).mean(0).sqrt()
-            logger.add_scalar('test/rmse', rmse.item(), global_step=i + 1)
+        for k, v in test_dict.items():
+            logger.add_scalar(k, v, global_step=i + 1)
 
 
 if __name__ == "__main__":

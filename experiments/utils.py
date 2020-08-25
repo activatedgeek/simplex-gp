@@ -5,6 +5,33 @@ import torch
 from scipy.io import loadmat
 import itertools
 import os
+import random
+import numpy as np
+
+
+def set_seeds(seed=None):
+  if seed:
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+
+def standardize(train_x, train_y, test_x, test_y):
+    x_mean = train_x.mean(0, keepdim=True)
+    x_std = train_x.std(0, keepdim=True) + 1e-6
+
+    y_mean = train_y.mean(0, keepdim=True)
+    y_std = train_y.std(0, keepdim=True) + 1e-6
+
+    train_x = (train_x - x_mean) / x_std
+    train_y = (train_y - y_mean) / y_std
+
+    test_x = (test_x - x_mean) / x_std
+    test_y = (test_y - y_mean) / y_std    
+
+    return train_x, train_y, test_x, test_y
+
 
 class UCIDataset(Dataset):
     UCI_PATH = Path(os.path.expanduser("~/datasets/uci/"))

@@ -130,3 +130,6 @@ dmypy.json
 
 # Weights & Biases
 wandb/
+
+# Slurm
+*.out

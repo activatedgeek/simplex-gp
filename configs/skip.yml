@@ -1,0 +1,26 @@
+## Datasets with small N.
+
+# method: grid
+# method: bayes
+# metric:
+#   name: val/lik
+#   goal: maximize
+
+method: random
+parameters:
+  dataset:
+    value: 3droad
+  lr:
+    values: [0.01, 0.1, 1.0]
+  epochs:
+    value: 200
+  log_int:
+    value: 1
+  lanc_iter:
+    values: [20, 40, 60, 80, 100]
+program: experiments/train_skip.py
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args}
