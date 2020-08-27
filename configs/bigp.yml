@@ -1,0 +1,25 @@
+## Datasets with small N.
+
+# method: grid
+# method: bayes
+# metric:
+#   name: val/lik
+#   goal: maximize
+
+method: random
+parameters:
+  dataset:
+    values: ['servo', 'housing', 'concrete', 'wine', 'kin40k', '3droad']
+  lr:
+    values: [0.001, 0.005, 0.01, 0.05]
+  epochs:
+    value: 100
+  log_int:
+    value: 1
+program: experiments/train_bigp.py
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args}
+

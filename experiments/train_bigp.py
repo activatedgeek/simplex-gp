@@ -67,7 +67,9 @@ def main(dataset=None, data_dir=None,
 
     wandb.init(tensorboard=True)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    ## Disable GPU for now.
+    # device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cpu"
     logger = SummaryWriter(log_dir=wandb.run.dir)
 
     train_dataset = UCIDataset.create(dataset, uci_data_dir=data_dir,
