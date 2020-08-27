@@ -95,18 +95,25 @@ def main(dataset: str = None, data_dir: str = None, lr: float = 0.1,
           with gp.settings.use_toeplitz(False), \
                gp.settings.max_root_decomposition_size(lanc_iter):
             train_dict = train(train_x, train_y, model, mll, optimizer)
-
             for k, v in train_dict.items():
               logger.add_scalar(k, v, global_step=i + 1)
 
-          with gp.settings.use_toeplitz(False), \
-               gp.settings.max_preconditioner_size(precon_size), \
-               gp.settings.max_root_decomposition_size(lanc_iter), \
-               gp.settings.fast_pred_var():
-            test_dict = test(test_x, test_y, model, mll)
+          if (i % log_int) == 0:
+            with gp.settings.use_toeplitz(False), \
+                gp.settings.max_preconditioner_size(precon_size), \
+                gp.settings.max_root_decomposition_size(lanc_iter), \
+                gp.settings.fast_pred_var():
+              test_dict = test(test_x, test_y, model, mll)
+              for k, v in test_dict.items():
+                logger.add_scalar(k, v, global_step=i + 1)
 
-            for k, v in test_dict.items():
-              logger.add_scalar(k, v, global_step=i + 1)
+      with gp.settings.use_toeplitz(False), \
+        gp.settings.max_preconditioner_size(precon_size), \
+        gp.settings.max_root_decomposition_size(lanc_iter), \
+        gp.settings.fast_pred_var():
+      test_dict = test(test_x, test_y, model, mll)
+      for k, v in test_dict.items():
+        logger.add_scalar(k, v, global_step=i + 1)
 
 
 if __name__ == "__main__":

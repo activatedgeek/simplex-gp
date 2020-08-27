@@ -55,7 +55,9 @@ def test(x, y, model, mll):
   }
 
 
-def main(dataset=None, data_dir=None, epochs=100, lr=0.1, log_int=10, seed=None):
+def main(dataset=None, data_dir=None,
+         epochs=100, lr=0.01,
+         log_int=1, seed=None):
     if data_dir is None and os.environ.get('DATADIR') is not None:
         data_dir = Path(os.path.join(os.environ.get('DATADIR'), 'uci'))
 
@@ -86,15 +88,17 @@ def main(dataset=None, data_dir=None, epochs=100, lr=0.1, log_int=10, seed=None)
 
     for i in tqdm(range(epochs)):
         train_dict = train(train_x, train_y, model, mll, optimizer)
-
         for k, v in train_dict.items():
             logger.add_scalar(k, v, global_step=i + 1)
         
-        test_dict = test(test_x, test_y, model, mll)
+        if (i % log_int) == 0:
+          test_dict = test(test_x, test_y, model, mll)
+          for k, v in test_dict.items():
+              logger.add_scalar(k, v, global_step=i + 1)
 
-        for k, v in test_dict.items():
-            logger.add_scalar(k, v, global_step=i + 1)
-
+    test_dict = test(test_x, test_y, model, mll)
+    for k, v in test_dict.items():
+        logger.add_scalar(k, v, global_step=i + 1)
 
 if __name__ == "__main__":
   os.environ['WANDB_MODE'] = os.environ.get('WANDB_MODE', default='dryrun')

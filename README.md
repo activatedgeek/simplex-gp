@@ -26,7 +26,11 @@ $ python experiments/train.py --dataset=elevators --data-dir=<path/to/uci/data>
 
 The CLI uses Fire, so all function arguments can be used as CLI arguments.
 
-To disable CUDA (and avoid segfaults for now), `export CUDA_VISIBLE_DEVICES=-1`.
+To disable CUDA, `export CUDA_VISIBLE_DEVICES=-1`.
+
+### Slurm
+
+See [run.sh](./configs/run.sh) for a reference file.
 
 ### W&B
 

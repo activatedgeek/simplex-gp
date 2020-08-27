@@ -16,8 +16,12 @@ export CUDA_VISIBLE_DEVICES=-1
 
 export WANDB_SWEEP_ID=
 export WANDB_MODE=run
+export WANDB_DIR="${LOGDIR}/wandb"
+export WANDB_NAME="${SLURM_JOB_NAME}--${SLURM_JOB_ID}"
 
 pushd "${WORKDIR}/bilateral-gp"
+
+export PYTHONPATH="$(pwd):${PYTHONPATH}"
 
 conda activate bilateral-gp
 
