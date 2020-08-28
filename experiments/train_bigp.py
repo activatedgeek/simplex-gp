@@ -15,7 +15,7 @@ class BilateralGPModel(gp.models.ExactGP):
         likelihood = gp.likelihoods.GaussianLikelihood()
         super().__init__(train_x, train_y, likelihood)
         self.mean_module = gp.means.ConstantMean()
-        self.covar_module = gp.kernels.ScaleKernel(BilateralKernel())
+        self.covar_module = gp.kernels.ScaleKernel(BilateralKernel(ard_num_dims=train_x.size(-1)))
 
     def forward(self, x):
         mean_x = self.mean_module(x)

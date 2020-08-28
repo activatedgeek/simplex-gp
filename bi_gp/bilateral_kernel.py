@@ -44,14 +44,13 @@ class RectangularLazyBilateral(LazyTensor):
 
 class BilateralKernel(Kernel):
     has_lengthscale = True
-    def __init__(self):
-        super().__init__()
-    def forward(self, x1, x2, diag=False,**kwargs):#what are the extra kwargs for??
-        if diag==True:
-            return torch.ones_like(x1[...,0])
-        # TODO(sanyam): verify this change.
+
+    def forward(self, x1, x2, diag=False, **params):#what are the extra kwargs for??
+        if diag == True:
+            assert False
+            return torch.ones_like(x1[..., 0])
+
         if x1.shape == x2.shape and x1.eq(x2).all():
             return LazyBilateral(x1.div(self.lengthscale))
         else:
             return RectangularLazyBilateral(x1.div(self.lengthscale),x2.div(self.lengthscale))
-        
