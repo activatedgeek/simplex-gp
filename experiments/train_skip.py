@@ -6,7 +6,7 @@ from tqdm.auto import tqdm
 import wandb
 from pathlib import Path
 
-from utils import set_seeds, standardize, UCIDataset
+from utils import set_seeds, log_scalar_dict, standardize, UCIDataset
 
 
 class SKIPGPModel(gp.models.ExactGP):
@@ -26,16 +26,18 @@ class SKIPGPModel(gp.models.ExactGP):
         return gp.distributions.MultivariateNormal(mean_x, covar_x)
 
 
-def train(x, y, model, mll, optim):
+def train(x, y, model, mll, optim, lanc_iter=100):
   model.train()
 
   optim.zero_grad()
 
-  output = model(x)
+  with gp.settings.max_root_decomposition_size(lanc_iter), \
+       gp.settings.use_toeplitz(False):
+    output = model(x)
 
-  loss = -mll(output, y)
+    loss = -mll(output, y)
 
-  loss.backward()
+    loss.backward()
 
   optim.step()
 
@@ -44,22 +46,26 @@ def train(x, y, model, mll, optim):
   }
 
 
-def test(x, y, model, mll):
+def test(x, y, model, mll, lanc_iter=100, pre_size=0):
   model.eval()
 
-  with torch.no_grad():
-    preds = model(x)
+  with torch.no_grad(), \
+       gp.settings.max_preconditioner_size(pre_size), \
+       gp.settings.max_root_decomposition_size(lanc_iter), \
+       gp.settings.fast_pred_var(), \
+       gp.settings.use_toeplitz(False):
+      preds = model(x)
 
-  pred_y = model.likelihood(model(x))
-  rmse = (pred_y.mean - y).pow(2).mean(0).sqrt()
+      pred_y = model.likelihood(model(x))
+      rmse = (pred_y.mean - y).pow(2).mean(0).sqrt()
 
   return {
     'test/rmse': rmse.item()
   }
 
 
-def main(dataset: str = None, data_dir: str = None, lr: float = 0.1,
-         lanc_iter: int = 30, epochs: int = 10, precon_size: int = 10,
+def main(dataset: str = None, data_dir: str = None,
+         epochs: int = 100, lr: int = 0.01, lanc_iter: int = 100, pre_size: int = 10,
          log_int: int = 1, seed: int = None):
     if data_dir is None and os.environ.get('DATADIR') is not None:
         data_dir = Path(os.path.join(os.environ.get('DATADIR'), 'uci'))
@@ -70,7 +76,9 @@ def main(dataset: str = None, data_dir: str = None, lr: float = 0.1,
 
     wandb.init(tensorboard=True)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    ## Disable GPU for now.
+    # device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = "cpu"
     logger = SummaryWriter(log_dir=wandb.run.dir)
 
     train_dataset = UCIDataset.create(dataset, uci_data_dir=data_dir,
@@ -89,31 +97,19 @@ def main(dataset: str = None, data_dir: str = None, lr: float = 0.1,
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-    with gp.settings.use_toeplitz(True):
-      for i in tqdm(range(epochs)):
+    for i in tqdm(range(epochs)):
+      train_dict = train(train_x, train_y, model, mll, optimizer,
+                         lanc_iter=lanc_iter)
+      log_scalar_dict(train_dict, logger, global_step=i + 1)
+      
+      if (i % log_int) == 0:
+        test_dict = test(test_x, test_y, model, mll,
+                         pre_size=pre_size, lanc_iter=lanc_iter)
+        log_scalar_dict(test_dict, logger, global_step=i + 1)
 
-          with gp.settings.use_toeplitz(False), \
-               gp.settings.max_root_decomposition_size(lanc_iter):
-            train_dict = train(train_x, train_y, model, mll, optimizer)
-            for k, v in train_dict.items():
-              logger.add_scalar(k, v, global_step=i + 1)
-
-          if (i % log_int) == 0:
-            with gp.settings.use_toeplitz(False), \
-                gp.settings.max_preconditioner_size(precon_size), \
-                gp.settings.max_root_decomposition_size(lanc_iter), \
-                gp.settings.fast_pred_var():
-              test_dict = test(test_x, test_y, model, mll)
-              for k, v in test_dict.items():
-                logger.add_scalar(k, v, global_step=i + 1)
-
-      with gp.settings.use_toeplitz(False), \
-        gp.settings.max_preconditioner_size(precon_size), \
-        gp.settings.max_root_decomposition_size(lanc_iter), \
-        gp.settings.fast_pred_var():
-      test_dict = test(test_x, test_y, model, mll)
-      for k, v in test_dict.items():
-        logger.add_scalar(k, v, global_step=i + 1)
+    test_dict = test(test_x, test_y, model, mll,
+                      pre_size=pre_size, lanc_iter=lanc_iter)
+    log_scalar_dict(test_dict, logger, global_step=i + 1)
 
 
 if __name__ == "__main__":

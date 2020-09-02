@@ -1,5 +1,3 @@
-## Datasets with small N.
-
 # method: grid
 # method: bayes
 # metric:
@@ -11,7 +9,7 @@ parameters:
   dataset:
     value: 3droad
   lr:
-    values: [0.01, 0.05, 0.1]
+    values: [0.1, 0.05, 0.01]
   epochs:
     value: 200
   lanc_iter:
