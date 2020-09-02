@@ -17,6 +17,11 @@ def set_seeds(seed=None):
     torch.cuda.manual_seed_all(seed)
 
 
+def log_scalar_dict(data, logger, global_step=None):
+    for k, v in data.items():
+        logger.add_scalar(k, v, global_step=global_step)
+
+
 def standardize(train_x, train_y, test_x, test_y):
     x_mean = train_x.mean(0, keepdim=True)
     x_std = train_x.std(0, keepdim=True) + 1e-6

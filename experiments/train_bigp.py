@@ -7,12 +7,13 @@ import wandb
 from pathlib import Path
 
 from bi_gp.bilateral_kernel import BilateralKernel
-from utils import set_seeds, standardize, UCIDataset
+from utils import set_seeds, log_scalar_dict, standardize, UCIDataset
 
 
 class BilateralGPModel(gp.models.ExactGP):
     def __init__(self, train_x, train_y):
-        likelihood = gp.likelihoods.GaussianLikelihood()
+        likelihood = gp.likelihoods.GaussianLikelihood(
+                      noise_constraint=gp.constraints.GreaterThan(1e-2))
         super().__init__(train_x, train_y, likelihood)
         self.mean_module = gp.means.ConstantMean()
         self.covar_module = gp.kernels.ScaleKernel(BilateralKernel(ard_num_dims=train_x.size(-1)))
@@ -23,16 +24,17 @@ class BilateralGPModel(gp.models.ExactGP):
         return gp.distributions.MultivariateNormal(mean_x, covar_x)
 
 
-def train(x, y, model, mll, optim):
+def train(x, y, model, mll, optim, lanc_iter=100):
   model.train()
 
   optim.zero_grad()
 
-  output = model(x)
+  with gp.settings.max_root_decomposition_size(lanc_iter):
+    output = model(x)
 
-  loss = -mll(output, y)
+    loss = -mll(output, y)
 
-  loss.backward()
+    loss.backward()
 
   optim.step()
 
@@ -41,23 +43,26 @@ def train(x, y, model, mll, optim):
   }
 
 
-def test(x, y, model, mll):
+def test(x, y, model, mll, lanc_iter=100, pre_size=0):
   model.eval()
 
-  with torch.no_grad():
-    preds = model(x)
+  with torch.no_grad(), \
+       gp.settings.max_preconditioner_size(pre_size), \
+       gp.settings.max_root_decomposition_size(lanc_iter), \
+       gp.settings.fast_pred_var():
+      preds = model(x)
 
-  pred_y = model.likelihood(model(x))
-  rmse = (pred_y.mean - y).pow(2).mean(0).sqrt()
+      pred_y = model.likelihood(model(x))
+      rmse = (pred_y.mean - y).pow(2).mean(0).sqrt()
 
   return {
     'test/rmse': rmse.item()
   }
 
 
-def main(dataset=None, data_dir=None,
-         epochs=100, lr=0.01,
-         log_int=1, seed=None):
+def main(dataset: str = None, data_dir: str = None,
+         epochs: int = 100, lr: int = 0.01, lanc_iter: int = 100, pre_size: int = 10,
+         log_int: int = 1, seed: int = None):
     if data_dir is None and os.environ.get('DATADIR') is not None:
         data_dir = Path(os.path.join(os.environ.get('DATADIR'), 'uci'))
 
@@ -89,18 +94,19 @@ def main(dataset=None, data_dir=None,
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     for i in tqdm(range(epochs)):
-        train_dict = train(train_x, train_y, model, mll, optimizer)
-        for k, v in train_dict.items():
-            logger.add_scalar(k, v, global_step=i + 1)
-        
-        if (i % log_int) == 0:
-          test_dict = test(test_x, test_y, model, mll)
-          for k, v in test_dict.items():
-              logger.add_scalar(k, v, global_step=i + 1)
+      train_dict = train(train_x, train_y, model, mll, optimizer,
+                         lanc_iter=lanc_iter)
+      log_scalar_dict(train_dict, logger, global_step=i + 1)
+      
+      if (i % log_int) == 0:
+        test_dict = test(test_x, test_y, model, mll,
+                         pre_size=pre_size, lanc_iter=lanc_iter)
+        log_scalar_dict(test_dict, logger, global_step=i + 1)
 
-    test_dict = test(test_x, test_y, model, mll)
-    for k, v in test_dict.items():
-        logger.add_scalar(k, v, global_step=i + 1)
+    test_dict = test(test_x, test_y, model, mll,
+                      pre_size=pre_size, lanc_iter=lanc_iter)
+    log_scalar_dict(test_dict, logger, global_step=i + 1)
+
 
 if __name__ == "__main__":
   os.environ['WANDB_MODE'] = os.environ.get('WANDB_MODE', default='dryrun')
