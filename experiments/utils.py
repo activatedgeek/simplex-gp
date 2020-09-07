@@ -100,7 +100,7 @@ class UCIDataset(Dataset):
             ```
 
         """
-        uci_data_dir = uci_data_dir or UCI_PATH
+        uci_data_dir = Path(uci_data_dir) or UCI_PATH
 
         def get(dataset_names: List[str]):
             return [(uci_data_dir / d / d).with_suffix(".mat") for d in dataset_names]
