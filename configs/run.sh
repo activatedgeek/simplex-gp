@@ -28,4 +28,3 @@ conda deactivate
 conda activate bilateral-gp
 
 wandb agent --count=1 ${WANDB_SWEEP_ID}
-
