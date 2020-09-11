@@ -5,6 +5,7 @@ import gpytorch as gp
 from tqdm.auto import tqdm
 import wandb
 from pathlib import Path
+from timeit import default_timer as timer
 
 from utils import set_seeds, log_scalar_dict, standardize, UCIDataset
 
@@ -27,11 +28,14 @@ class SKIPGPModel(gp.models.ExactGP):
 
 
 def train(x, y, model, mll, optim, lanc_iter=100):
+  t_start = timer()
+
   model.train()
 
   optim.zero_grad()
 
   with gp.settings.max_root_decomposition_size(lanc_iter), \
+       gp.settings.cg_tolerance(1.0), \
        gp.settings.use_toeplitz(False):
     output = model(x)
 
@@ -41,15 +45,21 @@ def train(x, y, model, mll, optim, lanc_iter=100):
 
   optim.step()
 
+  t_end = timer()
+
   return {
-    'train/ll': -loss.detach().item()
+    'train/ll': -loss.detach().item(),
+    'train/ts': t_end - t_start
   }
 
 
-def test(x, y, model, mll, lanc_iter=100, pre_size=0):
+def test(x, y, model, mll, lanc_iter=100, pre_size=100):
+  t_start = timer()
+
   model.eval()
 
   with torch.no_grad(), \
+       gp.settings.eval_cg_tolerance(1e-2), \
        gp.settings.max_preconditioner_size(pre_size), \
        gp.settings.max_root_decomposition_size(lanc_iter), \
        gp.settings.fast_pred_var(), \
@@ -59,13 +69,16 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=0):
       pred_y = model.likelihood(model(x))
       rmse = (pred_y.mean - y).pow(2).mean(0).sqrt()
 
+  t_end = timer()
+
   return {
-    'test/rmse': rmse.item()
+    'test/rmse': rmse.item(),
+    'test/ts': t_end - t_start
   }
 
 
 def main(dataset: str = None, data_dir: str = None,
-         epochs: int = 100, lr: int = 0.01, lanc_iter: int = 100, pre_size: int = 10,
+         epochs: int = 100, lr: int = 0.01, lanc_iter: int = 100, pre_size: int = 100,
          log_int: int = 1, seed: int = None):
     if data_dir is None and os.environ.get('DATADIR') is not None:
         data_dir = Path(os.path.join(os.environ.get('DATADIR'), 'uci'))
@@ -74,12 +87,9 @@ def main(dataset: str = None, data_dir: str = None,
 
     set_seeds(seed)
 
-    wandb.init(tensorboard=True)
-
     ## Disable GPU for now.
     # device = "cuda" if torch.cuda.is_available() else "cpu"
     device = "cpu"
-    logger = SummaryWriter(log_dir=wandb.run.dir)
 
     train_dataset = UCIDataset.create(dataset, uci_data_dir=data_dir,
                                       mode="train", device=device)
@@ -91,6 +101,17 @@ def main(dataset: str = None, data_dir: str = None,
     train_x, train_y, test_x, test_y = standardize(train_x, train_y, test_x, test_y)
 
     print(f'"{dataset}": D = {train_x.size(-1)}, Train N = {train_x.size(0)}, Test N = {test_x.size(0)}')
+
+    wandb.init(tensorboard=True, config={
+      'dataset': dataset,
+      'lr': lr,
+      'lanc_iter': lanc_iter,
+      'pre_size': pre_size,
+      'D': train_x.size(-1),
+      'N_train': train_x.size(0),
+      'N_test': test_x.size(0),
+    })
+    logger = SummaryWriter(log_dir=wandb.run.dir)
 
     model = SKIPGPModel(train_x, train_y).to(device)
     mll = gp.mlls.ExactMarginalLogLikelihood(model.likelihood, model)

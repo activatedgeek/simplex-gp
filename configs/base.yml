@@ -9,13 +9,13 @@ parameters:
   dataset:
     value: 3droad
   lr:
-    value: 0.1
+    value: 0.01
   epochs:
     value: 100
   lanc_iter:
-    value: 30
+    value: 100
   pre_size:
-    value: 10
+    value: 100
 program: experiments/train_bigp.py
 # program: experiments/train_skip.py
 command:
