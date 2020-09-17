@@ -68,7 +68,7 @@ def generate_sweep_all(alg=None, submit=False):
     'protein',
     'kin40k_all',
     'keggdirected',
-    'precipitation_all'
+    'precipitation3d_all'
   ]
 
   sweep_ids = []
