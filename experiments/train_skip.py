@@ -28,8 +28,6 @@ class SKIPGPModel(gp.models.ExactGP):
 
 
 def train(x, y, model, mll, optim, lanc_iter=100):
-  t_start = timer()
-
   model.train()
 
   optim.zero_grad()
@@ -37,25 +35,29 @@ def train(x, y, model, mll, optim, lanc_iter=100):
   with gp.settings.max_root_decomposition_size(lanc_iter), \
        gp.settings.cg_tolerance(1.0), \
        gp.settings.use_toeplitz(False):
+    t_start = timer()
+    
     output = model(x)
-
     loss = -mll(output, y)
 
+    loss_ts = timer() - t_start
+
+    t_start = timer()
+
     loss.backward()
+    optim.step()
 
-  optim.step()
-
-  t_end = timer()
+    bw_ts = timer() - t_start
 
   return {
     'train/ll': -loss.detach().item(),
-    'train/ts': t_end - t_start
+    'train/loss_ts': loss_ts,
+    'train/bw_ts': bw_ts,
+    'train/total_ts': loss_ts + bw_ts
   }
 
 
 def test(x, y, model, mll, lanc_iter=100, pre_size=100):
-  t_start = timer()
-
   model.eval()
 
   with torch.no_grad(), \
@@ -64,22 +66,24 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100):
        gp.settings.max_root_decomposition_size(lanc_iter), \
        gp.settings.fast_pred_var(), \
        gp.settings.use_toeplitz(False):
+      t_start = timer()
+    
       preds = model(x)
-
       pred_y = model.likelihood(model(x))
-      rmse = (pred_y.mean - y).pow(2).mean(0).sqrt()
 
-  t_end = timer()
+      pred_ts = timer() - t_start
+
+      rmse = (pred_y.mean - y).pow(2).mean(0).sqrt()
 
   return {
     'test/rmse': rmse.item(),
-    'test/ts': t_end - t_start
+    'test/pred_ts': pred_ts
   }
 
 
 def main(dataset: str = None, data_dir: str = None,
          epochs: int = 100, lr: int = 0.01, lanc_iter: int = 100, pre_size: int = 100,
-         log_int: int = 1, seed: int = None):
+         log_int: int = 5, seed: int = None):
     if data_dir is None and os.environ.get('DATADIR') is not None:
         data_dir = Path(os.path.join(os.environ.get('DATADIR'), 'uci'))
 
@@ -128,9 +132,10 @@ def main(dataset: str = None, data_dir: str = None,
                          pre_size=pre_size, lanc_iter=lanc_iter)
         log_scalar_dict(test_dict, logger, global_step=i + 1)
 
-    test_dict = test(test_x, test_y, model, mll,
-                      pre_size=pre_size, lanc_iter=lanc_iter)
-    log_scalar_dict(test_dict, logger, global_step=i + 1)
+    if (i % log_int) != 0:
+      test_dict = test(test_x, test_y, model, mll,
+                        pre_size=pre_size, lanc_iter=lanc_iter)
+      log_scalar_dict(test_dict, logger, global_step=i + 1)
 
 
 if __name__ == "__main__":
