@@ -18,4 +18,4 @@ dependencies:
     - tensorboard
     - torch
     - gpytorch
-    - wandb
+    - 'wandb<0.10.0'

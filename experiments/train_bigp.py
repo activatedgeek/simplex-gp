@@ -1,7 +1,6 @@
 import os
 import torch
 from torch.utils.tensorboard import SummaryWriter
-import numpy as np
 import gpytorch as gp
 from tqdm.auto import tqdm
 import wandb
