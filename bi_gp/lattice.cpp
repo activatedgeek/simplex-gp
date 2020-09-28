@@ -3,9 +3,9 @@
 //#include "PermutohedralLatticeCPU.h"
 #include "permutohedral.h"
 
-at::Tensor filter(at::Tensor src, at::Tensor ref) {
+at::Tensor filter(at::Tensor src, at::Tensor ref,int order=1) {
     //at::Tensor a = at::zeros_like(z);
-    at::Tensor out = PermutohedralLattice::filter(src,ref);
+    at::Tensor out = PermutohedralLattice::filter(src,ref,order);
     return out;
 }
 

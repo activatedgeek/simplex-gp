@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-
+#include <vector>
 #ifdef WIN32
 #include "win32time.h"
 #else
@@ -181,6 +181,45 @@ void arr_deleter(void *obj){
     }
 }
 
+
+int binomial_coefficients_table[6][6] = {
+    {1,0,0,0,0,0},
+    {2,1,0,0,0,0},
+    {6,4,1,0,0,0},
+    {20,15,6,1,0,0},
+    {70,56,28,8,1,0},
+    {252,210,120,45,10,1},
+};
+
+float_type binomial_coefficients(int order,int k){
+    assert (order<6);
+    float_type normalization = float_type(binomial_coefficients_table[order][0]);//(2.0**(2*order));
+    return float_type(binomial_coefficients_table[order][k>0?k:-k])/normalization;
+}
+float_type binomial_variance(int order){
+    assert (order<6);
+    return float_type(order)/2.0f;
+}
+
+// float_type binomial_coefficients_table[4][6] = {
+//     {1.0, 1.5565E-02, 5.8693E-08, 5.3618E-17, 1.1867E-29, 0.0000E+00},
+//     {1.0000E+00, 9.6180E-02, 8.5571E-05, 7.0427E-10, 5.3618E-17, 3.7762E-26},
+//     {1.0000e+00, 3.5321e-01, 1.5565e-02, 8.5571e-05, 5.8693e-08, 5.0224e-12},
+//     {1.0000, 0.7709, 0.3532, 0.0962, 0.0156, 0.0015},
+// };
+
+// float_type binomial_coefficients(int order,int k){
+//     assert (order<4);
+//     float_type normalization = float_type(binomial_coefficients_table[order][0]);//(2.0**(2*order));
+//     return float_type(binomial_coefficients_table[order][k>0?k:-k])/normalization;
+// }
+// float_type binomial_variance(int order){
+//     assert (order<4);
+//     return pow(float_type(order)/2.0f,2);
+// }
+
+
+
 /***************************************************************/
 /* The algorithm class that performs the filter
  * 
@@ -200,7 +239,7 @@ public:
      *     out : output of filtering src by ref
      *                expected to have shape n x c
      */
-    static at::Tensor filter(at::Tensor src, at::Tensor ref){
+    static at::Tensor filter(at::Tensor src, at::Tensor ref, int order=1){
         timeval t[5];
 
         int n = src.size(0);
@@ -209,7 +248,7 @@ public:
         int refChannels = ref.size(1);
         // Create lattice
         gettimeofday(t + 0, NULL);
-        PermutohedralLattice lattice(refChannels, srcChannels, n);
+        PermutohedralLattice lattice(refChannels, srcChannels, n, order);
 
         // Splat into the lattice
         gettimeofday(t + 1, NULL);
@@ -265,7 +304,7 @@ public:
         // Blur the lattice
         gettimeofday(t + 2, NULL);
         //printf("Blurring...");
-        lattice.blur();
+        lattice.blur(order);
 
         // Slice from the lattice
         gettimeofday(t + 3, NULL);
@@ -327,13 +366,12 @@ public:
 
         return output;
     }
-
     /* Constructor
             *         d_ : dimensionality of key vectors
             *        vd_ : dimensionality of value vectors
             * nData_ : number of points in the input
             */
-    PermutohedralLattice(int d_, int vd_, int nData_) : d(d_), vd(vd_), nData(nData_), hashTable(d_, vd_)
+    PermutohedralLattice(int d_, int vd_, int nData_, int order) : d(d_), vd(vd_), nData(nData_), hashTable(d_, vd_)
     {
 
         // Allocate storage for various arrays
@@ -369,13 +407,14 @@ public:
                 * we must scale the space to offset this.
                 *
                 * The total variance of the algorithm is (See pg.6 and 10 of paper):
-                *    [variance of splatting] + [variance of blurring] + [variance of splatting]
+                *    [variance of splatting] + [variance of blurring] + [variance of splicing]
                 *     = d(d+1)(d+1)/12 + d(d+1)(d+1)/2 + d(d+1)(d+1)/12
                 *     = 2d(d+1)(d+1)/3.
                 *
                 * So we need to scale the space by (d+1)sqrt(2/3).
                 */
-            scaleFactor[i] *= (d + 1) * sqrtf(2.0 / 3);
+            float_type sigma_blur = binomial_variance(order);
+            scaleFactor[i] *= (d + 1) * sqrtf(sigma_blur+1.0f/6.0f);//sqrtf(2.0 / 3);
         }
     }
 
@@ -499,14 +538,15 @@ public:
     }
 
     /* Performs a Gaussian blur along each projected axis in the hyperplane. */
-    void blur()
-    {
+    void blur(int order){
         // Prepare arrays
+        short *neighbor = new short[d + 1];
         short *neighbor1 = new short[d + 1];
         short *neighbor2 = new short[d + 1];
         float_type *newValue = new float_type[vd * hashTable.size()];
         float_type *oldValue = hashTable.getValues();
         float_type *hashTableBase = oldValue;
+        memset(newValue, 0.0f, sizeof(float_type) * vd * hashTable.size());
 
         float_type *zero = new float_type[vd];
         for (int k = 0; k < vd; k++)
@@ -521,33 +561,50 @@ public:
             for (int i = 0; i < hashTable.size(); i++){// blur point i in dimension j
                                                                                                      
                 short *key = hashTable.getKeys() + i * (d); // keys to current vertex
-                for (int k = 0; k < d; k++){
-                    neighbor1[k] = key[k] + 1;
-                    neighbor2[k] = key[k] - 1;
-                }
-                neighbor1[j] = key[j] - d;
-                neighbor2[j] = key[j] + d; // keys to the neighbors along the given axis.
 
-                float_type *oldVal = oldValue + i * vd;
+                //  // Init neighbor to (order) below value along given axis
                 float_type *newVal = newValue + i * vd;
+                for (int k = 0; k < vd; k++) newVal[k] = 0;
 
-                float_type *vm1, *vp1;
+                for (int nid=-order; nid<=order; ++nid){
 
-                vm1 = hashTable.lookup(neighbor1, false); // look up first neighbor
-                if (vm1)
-                    vm1 = vm1 - hashTableBase + oldValue;
-                else
-                    vm1 = zero;
+                    for (int k = 0; k < d; k++) neighbor[k] = key[k] - nid;
+                    neighbor[j] = key[j] + nid*d;
 
-                vp1 = hashTable.lookup(neighbor2, false); // look up second neighbor
-                if (vp1)
-                    vp1 = vp1 - hashTableBase + oldValue;
-                else
-                    vp1 = zero;
+                    float_type* val = hashTable.lookup(neighbor,false);
+                    val = val?val-hashTableBase+oldValue:zero;
+                    float_type c = binomial_coefficients(order,nid);
+                    // printf("%.3f\n",c);
+                    for (int k = 0; k < vd; k++) newVal[k] += c*val[k];
+                }
+                // for (int k = 0; k < d; k++){// shouldn't it be k<d+1?
+                //     neighbor1[k] = key[k] + 1;
+                //     neighbor2[k] = key[k] - 1;
+                // }
+                // neighbor1[j] = key[j] - d;
+                // neighbor2[j] = key[j] + d; // keys to the neighbors along the given axis.
 
-                // Mix values of the three vertices
-                for (int k = 0; k < vd; k++)
-                    newVal[k] = (0.5f * vm1[k] + 1.0f * oldVal[k] + 0.5f * vp1[k]); // factor of two from krahenbuhl's implementation
+                // float_type *oldVal = oldValue + i * vd;
+                // float_type *newVal = newValue + i * vd;
+
+                // float_type *vm1, *vp1;
+
+                // vm1 = hashTable.lookup(neighbor1, false); // look up first neighbor
+                // if (vm1)
+                //     vm1 = vm1 - hashTableBase + oldValue;
+                // else
+                //     vm1 = zero;
+
+                // vp1 = hashTable.lookup(neighbor2, false); // look up second neighbor
+                // if (vp1)
+                //     vp1 = vp1 - hashTableBase + oldValue;
+                // else
+                //     vp1 = zero;
+
+                // // Mix values of the three vertices
+                // for (int k = 0; k < vd; k++)
+                //     newVal[k] = (0.5f * vm1[k] + 1.0f * oldVal[k] + 0.5f * vp1[k]); // factor of two from krahenbuhl's implementation
+            
             }                                                                             // because the gaussians should not be normalized
 
             float_type *tmp = newValue;
@@ -558,15 +615,18 @@ public:
 
         // depending where we ended up, we may have to copy data
         if (oldValue != hashTableBase){
+            assert(false);
             memcpy(hashTableBase, oldValue, hashTable.size() * vd * sizeof(float_type));
             delete oldValue;
         }
         else{
+            //assert(false);
             delete newValue;
         }
         //printf("\n");
 
         delete zero;
+        delete neighbor;
         delete neighbor1;
         delete neighbor2;
     }
