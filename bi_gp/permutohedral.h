@@ -1,21 +1,20 @@
 #ifndef PERMUTOHEDRAL_LATTICE_H
 #define PERMUTOHEDRAL_LATTICE_H
-#include <torch/torch.h>
+
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <vector>
-#ifdef WIN32
-#include "win32time.h"
-#else
-#include <sys/time.h>
-#endif
-#define at_float_type torch::kFloat32
-//#define //printf //
+#include <torch/torch.h>
+
 using namespace std;
+
 typedef float float_type;
-//typedef at::kDouble at_float_type;
+typedef std::chrono::high_resolution_clock Clock;
+
+#define AT_FLOAT_TYPE torch::kFloat32
+#define NANO_CAST(d) std::chrono::duration_cast<std::chrono::nanoseconds>(d)
+
 /***************************************************************/
 /* Hash table implementation for permutohedral lattice
  * 
@@ -190,15 +189,14 @@ int binomial_coefficients_table[6][6] = {
     {70,56,28,8,1,0},
     {252,210,120,45,10,1},
 };
-
-float_type binomial_coefficients(int order,int k){
-    assert (order<6);
+float_type binomial_coefficients(int order, int k){
+    assert(order<6);
     float_type normalization = float_type(binomial_coefficients_table[order][0]);//(2.0**(2*order));
     return float_type(binomial_coefficients_table[order][k>0?k:-k])/normalization;
 }
 float_type binomial_variance(int order){
-    assert (order<6);
-    return float_type(order)/2.0f;
+    assert(order<6);
+    return float_type(order) / 2.0f;
 }
 
 // float_type binomial_coefficients_table[4][6] = {
@@ -240,48 +238,43 @@ public:
      *                expected to have shape n x c
      */
     static at::Tensor filter(at::Tensor src, at::Tensor ref, int order=1){
-        timeval t[5];
-
         int n = src.size(0);
         int srcChannels = src.size(1);
         assert(n == ref.size(0));
         int refChannels = ref.size(1);
-        // Create lattice
-        gettimeofday(t + 0, NULL);
+
+        auto start_ts = Clock::now();
         PermutohedralLattice lattice(refChannels, srcChannels, n, order);
+        auto init_ts = NANO_CAST(Clock::now() - start_ts);
+
+        std::cout << "Init: " << init_ts.count() << " ns\n";
 
         // Splat into the lattice
-        gettimeofday(t + 1, NULL);
-        //printf("Splatting...\n");
+        start_ts = Clock::now();
+
         float_type *arr_ref = new float_type[n * refChannels];
         float_type *arr_src = new float_type[n * srcChannels];
         auto ref_iter = ref.accessor<float_type, 2>();
         auto src_iter = src.accessor<float_type, 2>();
-        /// I've been assuming that this works, test it?
-        /// if the arrays get garbage, this is bad
 
-        // printf("%.3f\n",ref_iter[n-1][0]);
-        // printf("%.3f\n",src_iter[n-1][0]);
         for (int64_t i = 0; i < n; ++i){
             for (int64_t c = 0; c < refChannels; ++c){
                 arr_ref[i * refChannels + c] = ref_iter[i][c];
-                //if (i == (n - 1) && c == 0)
-                    //printf("%.3f\n", ref_iter[i][c]);
             }
         }
         for (int64_t i = 0; i < n; ++i){
             for (int64_t c = 0; c < srcChannels; ++c){
                 arr_src[i * srcChannels + c] = src_iter[i][c];
-                //if (i == (n - 1) && c == 0)
-                    //printf("%.3f\n", src_iter[i][c]);
             }
         }
-        // printf("%.3f \n",arr_ref[(n-1)*refChannels]);
-        // printf("%.3f \n",arr_src[(n-1)*srcChannels]);
-        // End test block
+
         for (int i = 0; i < n; ++i){
             lattice.splat(arr_ref + i * refChannels, arr_src + i * srcChannels);
         }
+
+        auto all_splat_ts = NANO_CAST(Clock::now() - start_ts);
+        
+        std::cout << "Splat: " << all_splat_ts.count() << " ns\n";
 
         // // Old code
         // float_type *col = new float_type[im.channels+1];
@@ -301,14 +294,18 @@ public:
         //     }
         // }
 
-        // Blur the lattice
-        gettimeofday(t + 2, NULL);
-        //printf("Blurring...");
+        // Blur
+        start_ts = Clock::now();
+
         lattice.blur(order);
+        
+        auto blur_ts = NANO_CAST(Clock::now() - start_ts);
+
+        std::cout << "Blur: " << blur_ts.count() << " ns\n";
 
         // Slice from the lattice
-        gettimeofday(t + 3, NULL);
-        //printf("Slicing...\n");
+        start_ts = Clock::now();
+
         lattice.beginSlice();
         float_type *outArray = new float_type[n * srcChannels];
         for (int i = 0; i < n * srcChannels; ++i){
@@ -317,20 +314,15 @@ public:
         for (int i = 0; i < n; ++i){
             float_type *col = outArray + i * srcChannels;
             lattice.slice(col);
-            // float_type scale = 1.0f/col[srcChannels-1]; // Last channel stores sum
-            // for (int c=0; c<srcChannels; ++c){
-            //     col[c] = col[c]*scale;
-            // }
         }
         delete[] arr_ref;
         delete[] arr_src;
-        // printf("%.6f",outArray[0]);
-        // printf("\n");
-        //printf("%.6f",outArray[1000]);
-        //at::Tensor output = at::from_blob(outArray,{n,srcChannels});
-        // at::kfloat_type
 
-        at::Tensor output = torch::from_blob(outArray, {n, srcChannels}, arr_deleter).to(at_float_type);
+        auto slice_ts = NANO_CAST(Clock::now() - start_ts);
+
+        std::cout << "Slice: " << slice_ts.count() << " ns\n";
+
+        at::Tensor output = torch::from_blob(outArray, {n, srcChannels}, arr_deleter).to(AT_FLOAT_TYPE);
         at::TensorAccessor<float_type, 2> fa = output.accessor<float_type, 2>();
         //printf("%.6f",fa[0][0]);
         // at::Tensor output = at::empty({n,srcChannels});
@@ -357,12 +349,6 @@ public:
         //         }
         //     }
         // }
-
-        // Print time elapsed for each step
-        gettimeofday(t + 4, NULL);
-        const char *names[4] = {"Init    ", "Splat ", "Blur    ", "Slice "};
-        for (int i = 1; i < 5; i++)
-         printf("%s: %3.3f s\n", names[i - 1], (t[i].tv_sec - t[i - 1].tv_sec) + (t[i].tv_usec - t[i - 1].tv_usec) / 1000000.0);
 
         return output;
     }
@@ -615,7 +601,7 @@ public:
 
         // depending where we ended up, we may have to copy data
         if (oldValue != hashTableBase){
-            assert(false);
+            // assert(false);
             memcpy(hashTableBase, oldValue, hashTable.size() * vd * sizeof(float_type));
             delete oldValue;
         }
