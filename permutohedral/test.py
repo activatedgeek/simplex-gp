@@ -12,7 +12,7 @@ if __name__ == "__main__":
   # cpu_lattice = load(name="lattice",
   #                    sources=[(root / 'bi_gp' / 'lattice.cpp')])
 
-  ref = torch.arange(0.0, 100000. + 1e-3, 0.5).unsqueeze(-1).to(device)
+  ref = torch.arange(0.0, 5. + 1e-3, 0.5).unsqueeze(-1).float().to(device)
   src = (ref**2).cos().to(device)
 
   gpu_lattice = load(name="gpu_lattice",
