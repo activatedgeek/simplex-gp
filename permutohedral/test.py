@@ -30,7 +30,8 @@ if __name__ == "__main__":
 
   with torch.no_grad():
     # ref = torch.randn(1000000, 100).float()
-    ref = torch.arange(0.0, 5., 0.5).unsqueeze(-1).float()
+    # ref = torch.randn(5, 2).float()
+    ref = torch.arange(0.0, 2.5, 0.5).unsqueeze(-1).float()
     src = (ref**2).cos()
 
   # test_cpu(root, src, ref)
