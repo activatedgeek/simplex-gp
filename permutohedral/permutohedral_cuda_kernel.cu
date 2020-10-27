@@ -6,8 +6,10 @@
 #include <THC/THCAtomics.cuh>
 
 #define BLOCK_SIZE 256
-#define PTAccessor2D torch::PackedTensorAccessor32<scalar_t,2,torch::RestrictPtrTraits>
-#define Tensor2PTAccessor2D(x) x.packed_accessor32<scalar_t,2,torch::RestrictPtrTraits>()
+#define PTAccessor2D(T) torch::PackedTensorAccessor32<T,2,torch::RestrictPtrTraits>
+#define Ten2PTAccessor2D(T, x) x.packed_accessor32<T,2,torch::RestrictPtrTraits>()
+#define TenOpt(x) torch::dtype(x.dtype()).device(x.device().type(), x.device().index())
+#define TenOptType(T, x) torch::dtype(T).device(x.device().type(), x.device().index())
 
 using at::Tensor;
 
@@ -19,7 +21,11 @@ using at::Tensor;
 
 template <typename scalar_t>
 __global__ void splat_kernel(
-    PTAccessor2D ref,
+    PTAccessor2D(scalar_t) ref,
+    PTAccessor2D(scalar_t) E,
+    PTAccessor2D(int16_t) Y,
+    PTAccessor2D(int16_t) R,
+    PTAccessor2D(scalar_t) B,
     const scalar_t* scaleFactor,
     const int16_t* canonical,
     int64_t* counter
@@ -29,14 +35,12 @@ __global__ void splat_kernel(
     return;
   }
 
-  auto pos = ref[n];
   const uint16_t pd = ref.size(1);
-
-  /** WARN: DYNALLOC. **/
-  scalar_t* elevated = new scalar_t[pd + 1];
-  int16_t* y = new int16_t[pd + 1];
-  uint16_t* rank = new uint16_t[pd + 1];
-  scalar_t* bary = new scalar_t[pd + 2];
+  auto pos = ref[n];
+  auto elevated = E[n];
+  auto y = Y[n];
+  auto rank = R[n];
+  auto bary = B[n];
 
   elevated[pd] = - pd * pos[pd - 1] * scaleFactor[pd - 1];
   for (uint16_t i = pd - 1; i > 0; i--) {
@@ -96,9 +100,6 @@ __global__ void splat_kernel(
 
   /** TODO: lock-free add to a hashtable + bookkeeping. **/
   gpuAtomicAdd(counter, static_cast<int64_t>(1));
-
-  delete [] elevated;
-  delete [] rank;
 }
 
 template <typename scalar_t>
@@ -143,11 +144,25 @@ public:
   }
 
   Tensor filter(Tensor src, Tensor ref) {
+    // initialize helper tensors.
+    _matE = torch::zeros({static_cast<int64_t>(N), static_cast<int64_t>(pd + 1)},
+                         TenOpt(ref));
+    _matY = torch::zeros({static_cast<int64_t>(N), static_cast<int64_t>(pd + 1)},
+                         TenOptType(torch::kI16, ref));
+    _matR = torch::zeros({static_cast<int64_t>(N), static_cast<int64_t>(pd + 1)},
+                         TenOptType(torch::kI16, ref));
+    _matB = torch::zeros({static_cast<int64_t>(N), static_cast<int64_t>(pd + 2)},
+                         TenOpt(ref));
+
     const dim3 threads(BLOCK_SIZE);
     const dim3 blocks((N + threads.x - 1) / threads.x);
 
     splat_kernel<scalar_t><<<blocks, threads>>>(
-      Tensor2PTAccessor2D(ref),
+      Ten2PTAccessor2D(scalar_t,ref),
+      Ten2PTAccessor2D(scalar_t,_matE),
+      Ten2PTAccessor2D(int16_t,_matY),
+      Ten2PTAccessor2D(int16_t,_matR),
+      Ten2PTAccessor2D(scalar_t,_matB),
       scaleFactor,
       canonical,
       counter
@@ -159,6 +174,9 @@ public:
     /** TODO: fixme once computations completed **/
     return torch::ones_like(src);
   }
+private:
+  // Matrices for lattice operations.
+  Tensor _matE, _matY, _matR, _matB;
 };
 
 Tensor permutohedral_cuda_filter(Tensor src, Tensor ref) {
