@@ -14,7 +14,7 @@
 
 using at::Tensor;
 
-#define BLOCK_SIZE 256
+#define BLOCK_SIZE 1024
 #define PTAccessor2D(T) at::PackedTensorAccessor32<T,2,at::RestrictPtrTraits>
 #define Accessor1Di(T) at::TensorAccessor<T,1,at::RestrictPtrTraits,int32_t>
 #define Ten2PTAccessor2D(T, x) x.packed_accessor32<T,2,at::RestrictPtrTraits>()
@@ -26,27 +26,82 @@ class HashTableGPU {
 private:
   uint16_t pd, vd;
   size_t N;
+  scalar_t* values;
+  int64_t* filled;
+
+  /**
+   * NOTE: CUDA atomic operations only defined on (unsigned) int types. Other
+   * types need to be implemented but we can get away with it.
+   **/
+  int* entryIdx;  
 public:
   HashTableGPU(uint16_t pd_, uint16_t vd_, size_t N_): 
     pd(pd_), vd(vd_), N(N_) {
+    cudaMallocManaged(&filled, sizeof(int64_t));
+    *filled = static_cast<int64_t>(0);
 
+    cudaMallocManaged(&entryIdx, N * (pd + 1) * sizeof(int));
+    cudaMemset(entryIdx, static_cast<int>(-1), N * (pd + 1));
+
+    cudaMallocManaged(&values, N * (pd + 1) * vd * sizeof(scalar_t));
+    cudaMemset(values, static_cast<scalar_t>(0.0), N * (pd + 1) * vd);
+  }
+
+  ~HashTableGPU() {
+    cudaFree(filled);
+    cudaFree(entryIdx);
+    cudaFree(values);
+  }
+
+  int64_t size() {
+    return *filled;
   }
 
   __device__ __forceinline__ uint32_t hash(Accessor1Di(int16_t) key) {
     uint32_t k = 0;
     for (uint16_t i = 0; i < pd; ++i) {
       k += static_cast<uint32_t>(key[i]);
-      k = k * 2531011;
+      k = k * static_cast<uint32_t>(2531011);
     }
     return k;
   }
 
-  __device__ void insert(Accessor1Di(int16_t) key) {
-    uint32_t h = hash(key);
-    /** TODO: lock-free create here. if created, then return the pointer **/
-    // do {
+  __device__ scalar_t* lookup(Accessor1Di(int16_t) key, bool create = false) {
+    uint32_t h = hash(key) % (N * (pd + 1));
 
-    // } while (1);
+    while (true) {
+      int cas = atomicCAS(&entryIdx[h],
+                          static_cast<int>(-1), static_cast<int>(-2));
+
+      if (cas == -2) { // Locked by another thread.
+      } else if (cas == -1) { // Lock acquired.
+        if (!create) {
+          atomicExch(&entryIdx[h], -1);
+          return nullptr;
+        }
+
+        gpuAtomicAdd(filled, static_cast<int64_t>(1));
+        /** TODO: Lock a slot to insert keys, entries and values into. **/
+        // for (uint16_t i = 0; i < vd; ++i) {
+        //   keys[slot * kd + i] = key[i];
+        // }
+        // atomicExch(e->valueIdx, slot);
+        // atomicExch(e->keyIdx, slot);
+
+        return nullptr;
+      } else { // No need to lock, but simply return pointer if keys match.
+        // bool match = true;
+        // for (int i = 0; i < pd && match; ++i) {
+        //   match = keys[e.keyIdx + i] == key[i];
+        // }
+        // if (match) {
+        //   return &values[(e->valueIdx) * vd];
+        // }
+        return nullptr;
+      }
+
+      ++h;
+    }
   }
 };
 
@@ -72,6 +127,7 @@ __global__ void splat_kernel(
   const uint16_t pd = ref.size(1);
   const uint16_t vd = src.size(1);
   auto pos = ref[n];
+  auto value = src[n];
   auto elevated = matE[n];
   auto y = matY[n];
   auto rank = matR[n];
@@ -139,11 +195,12 @@ __global__ void splat_kernel(
     for (uint16_t i = 0; i < pd; ++i) {
       key[i] = y[i] + canonical[r * (pd + 1) + rank[i]];
     }
-    
-    /** TODO: lock-free add to a hashtable. **/
-    hashTable.insert(key);
+
+    printf("%d\n\n", hashTable.hash(key));
+    // scalar_t* val = hashTable.lookup(key, true);
+    /** FIXME: uncomment when val returns correct pointers to hashtable. **/
     // for (uint16_t i = 0; i < vd; ++i) {
-    //   gpuAtomicAdd(val[i], bary[r] * src[i]);
+    //   gpuAtomicAdd(&val[i], bary[r] * value[i]);
     // }
 
     /** TODO: bookkeeping hash table location to re-use later. **/
@@ -228,9 +285,10 @@ public:
     cudaDeviceSynchronize();
 
     std::cout << *counter << std::endl;
+    std::cout << hashTable.size() << std::endl;
 
     /** TODO: fixme once computations completed **/
-    return torch::ones_like(src);
+    return at::ones_like(src);
   }
 private:
   // Matrices for internal lattice operations.
