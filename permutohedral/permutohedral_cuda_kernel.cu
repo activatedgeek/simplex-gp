@@ -3,6 +3,10 @@
  *  DYNALLOC: Dynamic malloc could be potentially disastrous for speed.
  *            Better patterns, contiguous shared thread memory, or pre-allocation.
  *  MALLOC: Need error checks after every CUDA malloc call.
+ *  LOCKFREEHASH: Generating the next free slot by using a naive lock-free approach
+ *    may cause problems when using many threads. The solution is to do
+ *    post-processing, which makes code less-readable. Keeping things simple for
+ *    now.
  **/
 
 #include <cmath>
@@ -25,49 +29,74 @@ template <typename scalar_t>
 class HashTableGPU {
 private:
   uint16_t pd, vd;
-  size_t N;
+  size_t N, capacity;
+
+  int16_t* keys;
   scalar_t* values;
-  int64_t* filled;
+
+  size_t* filled;
 
   /**
    * NOTE: CUDA atomic operations only defined on (unsigned) int types. Other
-   * types need to be implemented but we can get away with it.
+   * types need to be implemented manually, but int works for us.
    **/
-  int* entryIdx;  
+  int* entryIdx;
+  int* slotLock;
 public:
   HashTableGPU(uint16_t pd_, uint16_t vd_, size_t N_): 
     pd(pd_), vd(vd_), N(N_) {
-    cudaMallocManaged(&filled, sizeof(int64_t));
-    *filled = static_cast<int64_t>(0);
+    capacity = N * (pd + 1); // Loose upper bound.
 
-    cudaMallocManaged(&entryIdx, N * (pd + 1) * sizeof(int));
-    cudaMemset(entryIdx, static_cast<int>(-1), N * (pd + 1));
+    cudaMallocManaged(&keys, capacity * pd * sizeof(int16_t));
+    cudaMemset(keys, static_cast<int16_t>(0), capacity * pd);
 
-    cudaMallocManaged(&values, N * (pd + 1) * vd * sizeof(scalar_t));
-    cudaMemset(values, static_cast<scalar_t>(0.0), N * (pd + 1) * vd);
+    cudaMallocManaged(&values, capacity * vd * sizeof(scalar_t));
+    cudaMemset(values, static_cast<scalar_t>(0.0), capacity * vd);
+
+    cudaMallocManaged(&filled, sizeof(size_t));
+    cudaMemset(filled, static_cast<size_t>(0), 1);
+
+    cudaMallocManaged(&entryIdx, capacity * sizeof(int));
+    cudaMemset(entryIdx, static_cast<int>(-1), capacity);
+
+    cudaMallocManaged(&slotLock, sizeof(int));
+    cudaMemset(slotLock, static_cast<size_t>(-1), 1);
   }
 
   ~HashTableGPU() {
+    cudaFree(keys);
+    cudaFree(values);
     cudaFree(filled);
     cudaFree(entryIdx);
-    cudaFree(values);
+    cudaFree(slotLock);
   }
 
-  int64_t size() {
+  size_t size() {
     return *filled;
   }
 
-  __device__ __forceinline__ uint32_t hash(Accessor1Di(int16_t) key) {
-    uint32_t k = 0;
+  __device__ __forceinline__ size_t next_slot() {
+    while (true) {
+      int cas = atomicCAS(slotLock, static_cast<int>(-1), static_cast<int>(-2));
+      if (cas == -1) { // Lock acquired.
+        size_t slot = (*filled)++;
+        atomicExch(slotLock, static_cast<int>(-1)); // Release lock.
+        return slot;
+      }
+    }
+  }
+
+  __device__ __forceinline__ size_t hash(Accessor1Di(int16_t) key) {
+    size_t k = 0;
     for (uint16_t i = 0; i < pd; ++i) {
-      k += static_cast<uint32_t>(key[i]);
-      k = k * static_cast<uint32_t>(2531011);
+      k += static_cast<size_t>(key[i]);
+      k = k * static_cast<size_t>(2531011);
     }
     return k;
   }
 
   __device__ scalar_t* lookup(Accessor1Di(int16_t) key, bool create = false) {
-    uint32_t h = hash(key) % (N * (pd + 1));
+    size_t h = hash(key) % capacity;
 
     while (true) {
       int cas = atomicCAS(&entryIdx[h],
@@ -76,31 +105,36 @@ public:
       if (cas == -2) { // Locked by another thread.
       } else if (cas == -1) { // Lock acquired.
         if (!create) {
-          atomicExch(&entryIdx[h], -1);
+          atomicExch(&entryIdx[h], static_cast<int>(-1));
           return nullptr;
         }
 
-        gpuAtomicAdd(filled, static_cast<int64_t>(1));
-        /** TODO: Lock a slot to insert keys, entries and values into. **/
-        // for (uint16_t i = 0; i < vd; ++i) {
-        //   keys[slot * kd + i] = key[i];
-        // }
-        // atomicExch(e->valueIdx, slot);
-        // atomicExch(e->keyIdx, slot);
+        /** WARN: LOCKFREEHASH **/
+        size_t slot = next_slot();
+        
+        for (uint16_t i = 0; i < pd; ++i) {
+          keys[slot * pd + i] = key[i];
+        }
 
-        return nullptr;
-      } else { // No need to lock, but simply return pointer if keys match.
-        // bool match = true;
-        // for (int i = 0; i < pd && match; ++i) {
-        //   match = keys[e.keyIdx + i] == key[i];
-        // }
-        // if (match) {
-        //   return &values[(e->valueIdx) * vd];
-        // }
-        return nullptr;
+        atomicExch(&entryIdx[h], static_cast<int>(slot));
+
+        return &values[slot * vd];
+      } else { // No need to lock, simply return pointer if keys match.
+        int slot = entryIdx[h];
+
+        bool match = true;
+        for (uint16_t i = 0; i < pd && match; ++i) {
+          match = keys[slot * pd + i] == key[i];
+        }
+        if (match) {
+          return &values[slot * vd];
+        }
       }
 
       ++h;
+      if (h == capacity) {
+        h = 0;
+      }
     }
   }
 };
@@ -196,13 +230,10 @@ __global__ void splat_kernel(
       key[i] = y[i] + canonical[r * (pd + 1) + rank[i]];
     }
 
-    printf("%d\n\n", hashTable.hash(key));
-    // scalar_t* val = hashTable.lookup(key, true);
-    /** FIXME: uncomment when val returns correct pointers to hashtable. **/
+    scalar_t* val = hashTable.lookup(key, true);
     // for (uint16_t i = 0; i < vd; ++i) {
     //   gpuAtomicAdd(&val[i], bary[r] * value[i]);
     // }
-
     /** TODO: bookkeeping hash table location to re-use later. **/
   }
 
