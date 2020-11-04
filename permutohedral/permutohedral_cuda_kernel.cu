@@ -6,7 +6,7 @@
  *  LOCKFREEHASH: Generating the next free slot by using a naive lock-free approach
  *    may cause problems when using many threads. The solution is to do
  *    post-processing, which makes code less-readable. Keeping things simple for
- *    now.
+ *    now. This becomes challenging with large number of samples.
  **/
 
 #include <cmath>
@@ -25,6 +25,17 @@ using at::Tensor;
 #define TenSize2D(m,n) {static_cast<int64_t>(m), static_cast<int64_t>(n)}
 #define TenOptType(T, D) torch::dtype(T).device(D.type(),D.index())
 
+// https://stackoverflow.com/a/14038590/2425365
+#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true)
+{
+   if (code != cudaSuccess) 
+   {
+      fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+      if (abort) exit(code);
+   }
+}
+
 template <typename scalar_t>
 class HashTableGPU {
 private:
@@ -42,7 +53,7 @@ private:
   int* entryIdx;
   int* slotLock;
 
-  __device__ __forceinline__ int next_slot() {
+  __device__ __forceinline__ int next_free_slot() {
     while (true) {
       int cas = atomicCAS(slotLock, 0, 1);
       if (cas == 0) { // Lock acquired.
@@ -58,7 +69,7 @@ private:
     size_t k = 0;
     for (uint16_t i = 0; i < pd; ++i) {
       k += static_cast<size_t>(key[i]);
-      k = k * static_cast<size_t>(2531011);
+      k *= static_cast<size_t>(2531011);
     }
     return k;
   }
@@ -67,22 +78,22 @@ public:
     pd(pd_), vd(vd_), N(N_) {
     capacity = N * (pd + 1); // Loose upper bound.
 
-    cudaMallocManaged(&keys, capacity * pd * sizeof(int16_t));
+    gpuErrchk(cudaMallocManaged(&keys, capacity * pd * sizeof(int16_t)));
 
-    cudaMallocManaged(&values, capacity * vd * sizeof(scalar_t));
+    gpuErrchk(cudaMallocManaged(&values, capacity * vd * sizeof(scalar_t)));
     for (size_t i = 0; i < capacity * vd; ++i) {
       values[i] = static_cast<scalar_t>(0.0);
     }
 
-    cudaMallocManaged(&filled, sizeof(int));
+    gpuErrchk(cudaMallocManaged(&filled, sizeof(int)));
     *filled = 0;
 
-    cudaMallocManaged(&entryIdx, capacity * sizeof(int));
+    gpuErrchk(cudaMallocManaged(&entryIdx, capacity * sizeof(int)));
     for (size_t i = 0; i < capacity; ++i) {
       entryIdx[i] = -1;
     }
 
-    cudaMallocManaged(&slotLock, sizeof(int));
+    gpuErrchk(cudaMallocManaged(&slotLock, sizeof(int)));
     *slotLock = 0;
   }
 
@@ -98,8 +109,7 @@ public:
     return *filled;
   }
 
-  __device__ scalar_t* lookup(Accessor1Di(int16_t) key, bool create, size_t tmpid) {
-    const size_t realh = hash(key) % capacity;
+  __device__ scalar_t* lookup(Accessor1Di(int16_t) key, bool create) {
     size_t h = hash(key) % capacity;
 
     while (true) {
@@ -113,7 +123,7 @@ public:
         }
 
         /** WARN: LOCKFREEHASH **/
-        int slot = next_slot();
+        int slot = next_free_slot();
         
         for (uint16_t i = 0; i < pd; ++i) {
           keys[slot * pd + i] = key[i];
@@ -153,8 +163,7 @@ __global__ void splat_kernel(
     PTAccessor2D(int16_t) matK,
     const scalar_t* scaleFactor,
     const int16_t* canonical,
-    HashTableGPU<scalar_t> hashTable,
-    int64_t* counter
+    HashTableGPU<scalar_t> hashTable
   ) {
   const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
   if (n >= ref.size(0)) {
@@ -233,18 +242,11 @@ __global__ void splat_kernel(
       key[i] = y[i] + canonical[r * (pd + 1) + rank[i]];
     }
 
-    /** FIXME: only for debugging. **/
-    size_t tmpid = n * (pd + 1) + r;
-
-    scalar_t* val = hashTable.lookup(key, true, tmpid);
+    scalar_t* val = hashTable.lookup(key, true);
     for (uint16_t i = 0; i < vd; ++i) {
       gpuAtomicAdd(&val[i], bary[r] * value[i]);
     }
-    /** TODO: bookkeeping hash table location to re-use later. **/
   }
-
-  /** FIXME: Only for illustrative purposes. Remove later. **/
-  gpuAtomicAdd(counter, static_cast<int64_t>(1));
 }
 
 template <typename scalar_t>
@@ -254,7 +256,6 @@ private:
   size_t N;
   scalar_t* scaleFactor;
   int16_t* canonical;
-  int64_t* counter;
   HashTableGPU<scalar_t> hashTable;
 public:
   PermutohedralLatticeGPU(uint16_t pd_, uint16_t vd_, size_t N_): 
@@ -263,14 +264,12 @@ public:
     /** TODO: Adjust this scale factor for larger kernel stencils. **/
     scalar_t invStdDev = (pd + 1) * sqrt(2.0f / 3);
 
-    /** TODO: MALLOC **/
-    cudaMallocManaged(&scaleFactor, pd * sizeof(scalar_t));
+    gpuErrchk(cudaMallocManaged(&scaleFactor, pd * sizeof(scalar_t)));
     for (uint16_t i = 0; i < pd; ++i) {
       scaleFactor[i] = invStdDev / ((scalar_t) sqrt((i + 1) * (i + 2)));
     }
 
-    /** TODO: MALLOC **/
-    cudaMallocManaged(&canonical, (pd + 1) * (pd + 1) * sizeof(int16_t));
+    gpuErrchk(cudaMallocManaged(&canonical, (pd + 1) * (pd + 1) * sizeof(int16_t)));
     for (uint16_t i = 0; i <= pd; ++i) {
       for (uint16_t j = 0; j <= pd - i; ++j) {
         canonical[i * (pd + 1) + j] = i;
@@ -279,16 +278,11 @@ public:
         canonical[i * (pd + 1) + j] = i - (pd + 1);
       }
     }
-
-    /** FIXME: Only for illustrative purposes. Remove later. **/
-    cudaMallocManaged(&counter, sizeof(int64_t));
-    *counter = static_cast<int64_t>(0);
   }
 
   ~PermutohedralLatticeGPU() {
     cudaFree(scaleFactor);
     cudaFree(canonical);
-    cudaFree(counter);
   }
 
   void splat(Tensor src, Tensor ref) {
@@ -311,17 +305,15 @@ public:
       Ten2PTAccessor2D(int16_t,_matK),
       scaleFactor,
       canonical,
-      hashTable,
-      counter
+      hashTable
     );
   }
 
   Tensor filter(Tensor src, Tensor ref) {
     splat(src, ref);
 
-    cudaDeviceSynchronize();
+    gpuErrchk(cudaDeviceSynchronize());
 
-    std::cout << "Data processed: " << *counter << std::endl;
     std::cout << "GPU Hash table size: " << hashTable.size() << std::endl;
 
     /** TODO: fixme once computations completed **/

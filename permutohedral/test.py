@@ -30,7 +30,7 @@ if __name__ == "__main__":
   root = Path(os.path.dirname(__file__)) / '..'
 
   with torch.no_grad():
-    # ref = torch.randn(10000, 20).float()
+    # ref = torch.randn(100000, 20).float()
     ref = torch.arange(0., 5., 1.).unsqueeze(-1).float()
     src = (ref**2).cos()
 
