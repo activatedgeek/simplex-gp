@@ -19,6 +19,7 @@ def test_gpu(root, src, ref):
   ref = ref.to(device)
 
   gpu_lattice = load(name="gpu_lattice",
+                     verbose=True,
                      sources=[
                        (root / 'permutohedral' / 'permutohedral_cuda.cpp'),
                        (root / 'permutohedral' / 'permutohedral_cuda_kernel.cu')
@@ -29,9 +30,10 @@ if __name__ == "__main__":
   root = Path(os.path.dirname(__file__)) / '..'
 
   with torch.no_grad():
-    # ref = torch.randn(1000000, 100).float()
-    ref = torch.arange(0.0, 2.5, 0.5).unsqueeze(-1).float()
+    # ref = torch.randn(10000, 20).float()
+    ref = torch.arange(0., 5., 1.).unsqueeze(-1).float()
     src = (ref**2).cos()
 
-  # test_cpu(root, src, ref)
+  print(f'N: {ref.size(0)}, pD: {ref.size(1)}')
+  test_cpu(root, src, ref)
   test_gpu(root, src, ref)

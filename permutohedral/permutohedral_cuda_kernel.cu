@@ -34,33 +34,56 @@ private:
   int16_t* keys;
   scalar_t* values;
 
-  size_t* filled;
-
   /**
    * NOTE: CUDA atomic operations only defined on (unsigned) int types. Other
    * types need to be implemented manually, but int works for us.
    **/
+  int* filled;
   int* entryIdx;
   int* slotLock;
+
+  __device__ __forceinline__ int next_slot() {
+    while (true) {
+      int cas = atomicCAS(slotLock, 0, 1);
+      if (cas == 0) { // Lock acquired.
+        int slot = *filled;
+        *filled += 1;
+        atomicExch(slotLock, 0); // Release lock.
+        return slot;
+      }
+    }
+  }
+
+  __device__ __forceinline__ size_t hash(Accessor1Di(int16_t) key) {
+    size_t k = 0;
+    for (uint16_t i = 0; i < pd; ++i) {
+      k += static_cast<size_t>(key[i]);
+      k = k * static_cast<size_t>(2531011);
+    }
+    return k;
+  }
 public:
   HashTableGPU(uint16_t pd_, uint16_t vd_, size_t N_): 
     pd(pd_), vd(vd_), N(N_) {
     capacity = N * (pd + 1); // Loose upper bound.
 
     cudaMallocManaged(&keys, capacity * pd * sizeof(int16_t));
-    cudaMemset(keys, static_cast<int16_t>(0), capacity * pd);
 
     cudaMallocManaged(&values, capacity * vd * sizeof(scalar_t));
-    cudaMemset(values, static_cast<scalar_t>(0.0), capacity * vd);
+    for (size_t i = 0; i < capacity * vd; ++i) {
+      values[i] = static_cast<scalar_t>(0.0);
+    }
 
-    cudaMallocManaged(&filled, sizeof(size_t));
-    cudaMemset(filled, static_cast<size_t>(0), 1);
+    cudaMallocManaged(&filled, sizeof(int));
+    *filled = 0;
 
     cudaMallocManaged(&entryIdx, capacity * sizeof(int));
-    cudaMemset(entryIdx, static_cast<int>(-1), capacity);
+    for (size_t i = 0; i < capacity; ++i) {
+      entryIdx[i] = -1;
+    }
 
     cudaMallocManaged(&slotLock, sizeof(int));
-    cudaMemset(slotLock, static_cast<size_t>(-1), 1);
+    *slotLock = 0;
   }
 
   ~HashTableGPU() {
@@ -75,51 +98,31 @@ public:
     return *filled;
   }
 
-  __device__ __forceinline__ size_t next_slot() {
-    while (true) {
-      int cas = atomicCAS(slotLock, static_cast<int>(-1), static_cast<int>(-2));
-      if (cas == -1) { // Lock acquired.
-        size_t slot = (*filled)++;
-        atomicExch(slotLock, static_cast<int>(-1)); // Release lock.
-        return slot;
-      }
-    }
-  }
-
-  __device__ __forceinline__ size_t hash(Accessor1Di(int16_t) key) {
-    size_t k = 0;
-    for (uint16_t i = 0; i < pd; ++i) {
-      k += static_cast<size_t>(key[i]);
-      k = k * static_cast<size_t>(2531011);
-    }
-    return k;
-  }
-
-  __device__ scalar_t* lookup(Accessor1Di(int16_t) key, bool create = false) {
+  __device__ scalar_t* lookup(Accessor1Di(int16_t) key, bool create, size_t tmpid) {
+    const size_t realh = hash(key) % capacity;
     size_t h = hash(key) % capacity;
 
     while (true) {
-      int cas = atomicCAS(&entryIdx[h],
-                          static_cast<int>(-1), static_cast<int>(-2));
+      int cas = atomicCAS(&entryIdx[h], -1, -2);
 
       if (cas == -2) { // Locked by another thread.
       } else if (cas == -1) { // Lock acquired.
         if (!create) {
-          atomicExch(&entryIdx[h], static_cast<int>(-1));
+          atomicExch(&entryIdx[h], -1);
           return nullptr;
         }
 
         /** WARN: LOCKFREEHASH **/
-        size_t slot = next_slot();
+        int slot = next_slot();
         
         for (uint16_t i = 0; i < pd; ++i) {
           keys[slot * pd + i] = key[i];
         }
 
-        atomicExch(&entryIdx[h], static_cast<int>(slot));
+        atomicExch(&entryIdx[h], slot);
 
         return &values[slot * vd];
-      } else { // No need to lock, simply return pointer if keys match.
+      } else { // Otherwise check if an existing slot matches.
         int slot = entryIdx[h];
 
         bool match = true;
@@ -230,10 +233,13 @@ __global__ void splat_kernel(
       key[i] = y[i] + canonical[r * (pd + 1) + rank[i]];
     }
 
-    scalar_t* val = hashTable.lookup(key, true);
-    // for (uint16_t i = 0; i < vd; ++i) {
-    //   gpuAtomicAdd(&val[i], bary[r] * value[i]);
-    // }
+    /** FIXME: only for debugging. **/
+    size_t tmpid = n * (pd + 1) + r;
+
+    scalar_t* val = hashTable.lookup(key, true, tmpid);
+    for (uint16_t i = 0; i < vd; ++i) {
+      gpuAtomicAdd(&val[i], bary[r] * value[i]);
+    }
     /** TODO: bookkeeping hash table location to re-use later. **/
   }
 
@@ -315,8 +321,8 @@ public:
 
     cudaDeviceSynchronize();
 
-    std::cout << *counter << std::endl;
-    std::cout << hashTable.size() << std::endl;
+    std::cout << "Data processed: " << *counter << std::endl;
+    std::cout << "GPU Hash table size: " << hashTable.size() << std::endl;
 
     /** TODO: fixme once computations completed **/
     return at::ones_like(src);
