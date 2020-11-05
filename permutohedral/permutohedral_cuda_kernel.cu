@@ -1,14 +1,3 @@
-/**
- * NOTE: This block explains the comment codes used throughout.
- *  DYNALLOC: Dynamic malloc could be potentially disastrous for speed.
- *            Better patterns, contiguous shared thread memory, or pre-allocation.
- *  MALLOC: Need error checks after every CUDA malloc call.
- *  LOCKFREEHASH: Generating the next free slot by using a naive lock-free approach
- *    may cause problems when using many threads. The solution is to do
- *    post-processing, which makes code less-readable. Keeping things simple for
- *    now. This becomes challenging with large number of samples.
- **/
-
 #include <cmath>
 #include <cstdio>
 #include <cuda.h>
@@ -17,7 +6,9 @@
 #include <THC/THCAtomics.cuh>
 
 using at::Tensor;
+typedef std::chrono::high_resolution_clock Clock;
 
+#define NANO_CAST(d) std::chrono::duration_cast<std::chrono::nanoseconds>(d)
 #define BLOCK_SIZE 1024
 #define PTAccessor2D(T) at::PackedTensorAccessor32<T,2,at::RestrictPtrTraits>
 #define Accessor1Di(T) at::TensorAccessor<T,1,at::RestrictPtrTraits,int32_t>
@@ -37,33 +28,22 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
 }
 
 template <typename scalar_t>
+struct ReplayEntry{
+  size_t entry;
+  scalar_t weight;
+};
+
+template <typename scalar_t>
 class HashTableGPU {
 private:
-  uint16_t pd, vd;
-  size_t N, capacity;
-
   int16_t* keys;
   scalar_t* values;
 
   /**
-   * NOTE: CUDA atomic operations only defined on (unsigned) int types. Other
-   * types need to be implemented manually, but int works for us.
+   * Each point has at most (pd + 1) neighbors.
+   * Each entry then maps to the lattice point.
    **/
-  int* filled;
-  int* entryIdx;
-  int* slotLock;
-
-  __device__ __forceinline__ int next_free_slot() {
-    while (true) {
-      int cas = atomicCAS(slotLock, 0, 1);
-      if (cas == 0) { // Lock acquired.
-        int slot = *filled;
-        *filled += 1;
-        atomicExch(slotLock, 0); // Release lock.
-        return slot;
-      }
-    }
-  }
+  int* entry2nid;
 
   __device__ __forceinline__ size_t hash(Accessor1Di(int16_t) key) {
     size_t k = 0;
@@ -74,9 +54,12 @@ private:
     return k;
   }
 public:
+  uint16_t pd, vd;
+  size_t N, capacity;
+
   HashTableGPU(uint16_t pd_, uint16_t vd_, size_t N_): 
     pd(pd_), vd(vd_), N(N_) {
-    capacity = N * (pd + 1); // Loose upper bound.
+    capacity = N * (pd + 1);
 
     gpuErrchk(cudaMallocManaged(&keys, capacity * pd * sizeof(int16_t)));
 
@@ -85,65 +68,50 @@ public:
       values[i] = static_cast<scalar_t>(0.0);
     }
 
-    gpuErrchk(cudaMallocManaged(&filled, sizeof(int)));
-    *filled = 0;
-
-    gpuErrchk(cudaMallocManaged(&entryIdx, capacity * sizeof(int)));
-    for (size_t i = 0; i < capacity; ++i) {
-      entryIdx[i] = -1;
-    }
-
-    gpuErrchk(cudaMallocManaged(&slotLock, sizeof(int)));
-    *slotLock = 0;
+    gpuErrchk(cudaMallocManaged(&entry2nid, capacity * sizeof(int)));
+    for (size_t i = 0; i < capacity; ++i) { entry2nid[i] = -1; }
   }
 
   ~HashTableGPU() {
     cudaFree(keys);
     cudaFree(values);
-    cudaFree(filled);
-    cudaFree(entryIdx);
-    cudaFree(slotLock);
+    cudaFree(entry2nid);
   }
 
-  size_t size() {
-    return *filled;
+  __device__ int16_t* getKeys() { return keys; }
+  __device__ scalar_t* getValues() { return values; }
+
+  /** Assumes entry exists, no need to be atomic. **/
+  __device__ scalar_t* lookupValue(size_t h) {
+    return &values[entry2nid[h] * vd];
   }
 
-  __device__ scalar_t* lookup(Accessor1Di(int16_t) key, bool create) {
+  __device__ size_t insert(Accessor1Di(int16_t) key, int nid) {
     size_t h = hash(key) % capacity;
 
     while (true) {
-      int cas = atomicCAS(&entryIdx[h], -1, -2);
+      int cas = atomicCAS(&entry2nid[h], -1, -2); // Returns the (old) value at location.
 
       if (cas == -2) { // Locked by another thread.
       } else if (cas == -1) { // Lock acquired.
-        if (!create) {
-          atomicExch(&entryIdx[h], -1);
-          return nullptr;
-        }
-
-        /** WARN: LOCKFREEHASH **/
-        int slot = next_free_slot();
-        
         for (uint16_t i = 0; i < pd; ++i) {
-          keys[slot * pd + i] = key[i];
+          keys[nid * pd + i] = key[i];
         }
+        
+        atomicExch(&entry2nid[h], nid);
 
-        atomicExch(&entryIdx[h], slot);
-
-        return &values[slot * vd];
-      } else { // Otherwise check if an existing slot matches.
-        int slot = entryIdx[h];
-
+        return h;
+      } else { // Otherwise check if an existing key matches.
         bool match = true;
         for (uint16_t i = 0; i < pd && match; ++i) {
-          match = keys[slot * pd + i] == key[i];
+          match = keys[cas * pd + i] == key[i];
         }
         if (match) {
-          return &values[slot * vd];
+          return h;
         }
       }
 
+      // Linear probing.
       ++h;
       if (h == capacity) {
         h = 0;
@@ -163,8 +131,8 @@ __global__ void splat_kernel(
     PTAccessor2D(int16_t) matK,
     const scalar_t* scaleFactor,
     const int16_t* canonical,
-    HashTableGPU<scalar_t> hashTable
-  ) {
+    HashTableGPU<scalar_t> table,
+    ReplayEntry<scalar_t>* replay) {
   const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
   if (n >= ref.size(0)) {
     return;
@@ -238,13 +206,49 @@ __global__ void splat_kernel(
   bary[0] += 1.0 + bary[pd + 1];
 
   for (uint16_t r = 0; r <= pd; ++r) {
+    size_t nid = n * (pd + 1) + r;
+
     for (uint16_t i = 0; i < pd; ++i) {
       key[i] = y[i] + canonical[r * (pd + 1) + rank[i]];
     }
 
-    scalar_t* val = hashTable.lookup(key, true);
+    size_t h = table.insert(key, nid);
+    /** 
+     * FIXME: Are we sure that all hashes are inserted only once
+     * and assigned the same entry "h"? Potentially not, and 
+     * we may need a second cleanup pass. Duplicate entries can
+     * arise due to linear probing. Sequential operation over 
+     * "nid" wouldn't have this problem.
+     **/
+    replay[nid].entry = h;
+    replay[nid].weight = bary[r];
+    
+    scalar_t* val = table.lookupValue(h);
     for (uint16_t i = 0; i < vd; ++i) {
       gpuAtomicAdd(&val[i], bary[r] * value[i]);
+    }
+  }
+}
+
+template <typename scalar_t>
+__global__ void slice_kernel(
+    PTAccessor2D(scalar_t) result,
+    HashTableGPU<scalar_t> table,
+    ReplayEntry<scalar_t>* replay) {
+  const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
+  if (n >= table.N) {
+    return;
+  }
+
+  const uint16_t pd = table.pd;
+  const uint16_t vd = table.vd;
+  auto out = result[n];
+
+  for (uint16_t r = 0; r <= pd; ++r) {
+    size_t nid = n * (pd + 1) + r;
+    scalar_t* val = table.lookupValue(replay[nid].entry);
+    for (uint16_t j = 0; j < vd; ++j) {
+      out[j] += replay[nid].weight * val[j] / (1 + powf(2, -pd));
     }
   }
 }
@@ -257,6 +261,7 @@ private:
   scalar_t* scaleFactor;
   int16_t* canonical;
   HashTableGPU<scalar_t> hashTable;
+  ReplayEntry<scalar_t>* replay;
 public:
   PermutohedralLatticeGPU(uint16_t pd_, uint16_t vd_, size_t N_): 
     pd(pd_), vd(vd_), N(N_), hashTable(HashTableGPU<scalar_t>(pd_, vd_, N_)) {
@@ -278,11 +283,14 @@ public:
         canonical[i * (pd + 1) + j] = i - (pd + 1);
       }
     }
+
+    gpuErrchk(cudaMallocManaged(&replay, N * (pd + 1) * sizeof(ReplayEntry<scalar_t>)));
   }
 
   ~PermutohedralLatticeGPU() {
     cudaFree(scaleFactor);
     cudaFree(canonical);
+    cudaFree(replay);
   }
 
   void splat(Tensor src, Tensor ref) {
@@ -305,8 +313,24 @@ public:
       Ten2PTAccessor2D(int16_t,_matK),
       scaleFactor,
       canonical,
-      hashTable
+      hashTable,
+      replay
     );
+  }
+
+  Tensor slice(Tensor src, Tensor ref) {
+    Tensor result = torch::zeros_like(src);
+
+    const dim3 threads(BLOCK_SIZE);
+    const dim3 blocks((N + threads.x - 1) / threads.x);
+
+    slice_kernel<scalar_t><<<blocks, threads>>>(
+      Ten2PTAccessor2D(scalar_t,result),
+      hashTable,
+      replay
+    );
+
+    return result;
   }
 
   Tensor filter(Tensor src, Tensor ref) {
@@ -314,10 +338,13 @@ public:
 
     gpuErrchk(cudaDeviceSynchronize());
 
-    std::cout << "GPU Hash table size: " << hashTable.size() << std::endl;
+    /** TODO: blur. **/
 
-    /** TODO: fixme once computations completed **/
-    return at::ones_like(src);
+    Tensor result = slice(src, ref);
+
+    gpuErrchk(cudaDeviceSynchronize());
+
+    return result;
   }
 private:
   // Matrices for internal lattice operations.
