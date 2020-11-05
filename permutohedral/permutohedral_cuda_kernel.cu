@@ -45,7 +45,7 @@ private:
    **/
   int* entry2nid;
 
-  __device__ __forceinline__ size_t hash(Accessor1Di(int16_t) key) {
+  __device__ __forceinline__ size_t hash(int16_t* key) {
     size_t k = 0;
     for (uint16_t i = 0; i < pd; ++i) {
       k += static_cast<size_t>(key[i]);
@@ -78,6 +78,7 @@ public:
     cudaFree(entry2nid);
   }
 
+  __device__ int* getEntries() { return entry2nid; }
   __device__ int16_t* getKeys() { return keys; }
   __device__ scalar_t* getValues() { return values; }
 
@@ -86,7 +87,7 @@ public:
     return &values[entry2nid[h] * vd];
   }
 
-  __device__ size_t insert(Accessor1Di(int16_t) key, int nid) {
+  __device__ size_t insert(int16_t* key, int nid) {
     size_t h = hash(key) % capacity;
 
     while (true) {
@@ -118,6 +119,30 @@ public:
       }
     }
   }
+
+  __device__ int64_t get(int16_t* key) {
+    size_t h = hash(key) % capacity;
+
+    while (true) {
+      int nid = entry2nid[h];
+      if (nid == -1) {
+        return -1;
+      }
+
+      bool match = true;
+      for (uint16_t i = 0; i < pd && match; ++i) {
+        match = keys[nid * pd + i] == key[i];
+      }
+      if (match) {
+        return h;
+      }
+
+      ++h;
+      if (h == capacity) {
+        h = 0;
+      }
+    }
+  }
 };
 
 template <typename scalar_t>
@@ -128,11 +153,12 @@ __global__ void splat_kernel(
     PTAccessor2D(int16_t) matY,
     PTAccessor2D(int16_t) matR,
     PTAccessor2D(scalar_t) matB,
-    PTAccessor2D(int16_t) matK,
+    int16_t* matK,
     const scalar_t* scaleFactor,
     const int16_t* canonical,
     HashTableGPU<scalar_t> table,
-    ReplayEntry<scalar_t>* replay) {
+    ReplayEntry<scalar_t>* replay,
+    int64_t* counter) {
   const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
   if (n >= ref.size(0)) {
     return;
@@ -146,7 +172,7 @@ __global__ void splat_kernel(
   auto y = matY[n];
   auto rank = matR[n];
   auto bary = matB[n];
-  auto key = matK[n];
+  auto key = &matK[n * pd];
 
   elevated[pd] = - pd * pos[pd - 1] * scaleFactor[pd - 1];
   for (uint16_t i = pd - 1; i > 0; i--) {
@@ -227,22 +253,59 @@ __global__ void splat_kernel(
     for (uint16_t i = 0; i < vd; ++i) {
       gpuAtomicAdd(&val[i], bary[r] * value[i]);
     }
+
+    gpuAtomicAdd(counter, static_cast<int64_t>(1));
   }
 }
 
 template <typename scalar_t>
-__global__ void slice_kernel(
-    PTAccessor2D(scalar_t) result,
-    HashTableGPU<scalar_t> table,
-    ReplayEntry<scalar_t>* replay) {
+__global__ void process_hashtable_kernel(
+    HashTableGPU<scalar_t> table) {
+  
   const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
   if (n >= table.N) {
     return;
   }
+  const size_t r = blockIdx.y;
 
   const uint16_t pd = table.pd;
-  const uint16_t vd = table.vd;
-  auto out = result[n];
+  const size_t nid = n * pd + r;
+
+  int* entries = table.getEntries();
+  int16_t* keys = table.getKeys();
+
+  /** 
+   * TODO: Combine any entries where the same hash + key have been mapped
+   * to different entries. We can point to the first found entry, but then
+   * also need to merge the value sums we've already computed. What's the
+   * right way?
+   **/
+  if (entries[nid] >= 0) {
+    entries[nid] = table.get(&keys[entries[nid] * pd]);
+  }
+}
+
+template <typename scalar_t>
+__global__ void blur_kernel(
+    HashTableGPU<scalar_t> table) {
+  /**
+   * TODO: Blur kernel.
+   **/
+}
+
+template <typename scalar_t>
+__global__ void slice_kernel(
+    PTAccessor2D(scalar_t) res,
+    HashTableGPU<scalar_t> table,
+    ReplayEntry<scalar_t>* replay) {
+  const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
+  if (n >= res.size(0)) {
+    return;
+  }
+
+  const uint16_t pd = table.pd;
+  const uint16_t vd = res.size(1);
+  auto out = res[n];
 
   for (uint16_t r = 0; r <= pd; ++r) {
     size_t nid = n * (pd + 1) + r;
@@ -285,12 +348,17 @@ public:
     }
 
     gpuErrchk(cudaMallocManaged(&replay, N * (pd + 1) * sizeof(ReplayEntry<scalar_t>)));
+
+    /** FIXME: only for debugging, remove after. **/
+    gpuErrchk(cudaMallocManaged(&counter, sizeof(int64_t)));
+    *counter = 0;
   }
 
   ~PermutohedralLatticeGPU() {
     cudaFree(scaleFactor);
     cudaFree(canonical);
     cudaFree(replay);
+    cudaFree(counter);
   }
 
   void splat(Tensor src, Tensor ref) {
@@ -298,10 +366,10 @@ public:
     _matY = torch::zeros(TenSize2D(N, pd + 1), TenOptType(torch::kI16,ref.device()));
     _matR = torch::zeros(TenSize2D(N, pd + 1), TenOptType(torch::kI16,ref.device()));
     _matB = torch::zeros(TenSize2D(N, pd + 2), TenOptType(ref.dtype(),ref.device()));
-    _matK = torch::zeros(TenSize2D(N, pd), TenOptType(torch::kI16,ref.device()));
+    gpuErrchk(cudaMallocManaged(&_matK, N * pd * sizeof(int16_t)));
 
     const dim3 threads(BLOCK_SIZE);
-    const dim3 blocks((N + threads.x - 1) / threads.x);
+    dim3 blocks((N + threads.x - 1) / threads.x);
 
     splat_kernel<scalar_t><<<blocks, threads>>>(
       Ten2PTAccessor2D(scalar_t,src),
@@ -310,27 +378,42 @@ public:
       Ten2PTAccessor2D(int16_t,_matY),
       Ten2PTAccessor2D(int16_t,_matR),
       Ten2PTAccessor2D(scalar_t,_matB),
-      Ten2PTAccessor2D(int16_t,_matK),
+      _matK,
       scaleFactor,
       canonical,
       hashTable,
-      replay
+      replay,
+      counter
+    );
+
+    gpuErrchk(cudaDeviceSynchronize());
+
+    blocks.y = pd + 1;
+    process_hashtable_kernel<scalar_t><<<blocks,threads>>>(
+      hashTable
     );
   }
 
-  Tensor slice(Tensor src, Tensor ref) {
-    Tensor result = torch::zeros_like(src);
+  void blur(uint16_t d) {
+    const dim3 threads(BLOCK_SIZE);
+    const dim3 blocks((N + threads.x - 1) / threads.x);
+
+    blur_kernel<scalar_t><<<blocks, threads>>>(
+      hashTable
+    );
+  }
+
+  void slice(Tensor src, Tensor ref) {
+    res = torch::zeros(TenSize2D(N, vd), TenOptType(src.dtype(),src.device()));
 
     const dim3 threads(BLOCK_SIZE);
     const dim3 blocks((N + threads.x - 1) / threads.x);
 
     slice_kernel<scalar_t><<<blocks, threads>>>(
-      Ten2PTAccessor2D(scalar_t,result),
+      Ten2PTAccessor2D(scalar_t,res),
       hashTable,
       replay
     );
-
-    return result;
   }
 
   Tensor filter(Tensor src, Tensor ref) {
@@ -338,17 +421,24 @@ public:
 
     gpuErrchk(cudaDeviceSynchronize());
 
-    /** TODO: blur. **/
+    for (uint16_t i = 0; i <= pd; ++i) {
+      blur(i);
+    }
 
-    Tensor result = slice(src, ref);
+    slice(src, ref);
 
     gpuErrchk(cudaDeviceSynchronize());
 
-    return result;
+    std::cout << "Counter: " << *counter << std::endl;
+
+    return res;
   }
 private:
+  int64_t* counter;
+  int16_t* _matK;
+  Tensor res;
   // Matrices for internal lattice operations.
-  Tensor _matE, _matY, _matR, _matB, _matK;
+  Tensor _matE, _matY, _matR, _matB;
 };
 
 Tensor permutohedral_cuda_filter(Tensor src, Tensor ref) {

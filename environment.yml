@@ -16,6 +16,6 @@ dependencies:
     - tqdm
     - fire
     - tensorboard
-    - torch
+    - 'torch -f https://download.pytorch.org/whl/cu102/torch_stable.html'
     - gpytorch
-    - 'wandb<0.10.0'
+    - wandb
