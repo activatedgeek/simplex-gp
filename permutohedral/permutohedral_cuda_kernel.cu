@@ -44,20 +44,10 @@ private:
    * Each entry then maps to the lattice point.
    **/
   int* entry2nid;
-
-  __device__ __forceinline__ size_t hash(int16_t* key) {
-    size_t k = 0;
-    for (uint16_t i = 0; i < pd; ++i) {
-      k += static_cast<size_t>(key[i]);
-      k *= static_cast<size_t>(2531011);
-    }
-    return k;
-  }
 public:
-  uint16_t pd, vd;
-  size_t N, capacity;
+  size_t N, pd, vd, capacity;
 
-  HashTableGPU(uint16_t pd_, uint16_t vd_, size_t N_): 
+  HashTableGPU(size_t pd_, size_t vd_, size_t N_): 
     pd(pd_), vd(vd_), N(N_) {
     capacity = N * (pd + 1);
 
@@ -69,7 +59,9 @@ public:
     }
 
     gpuErrchk(cudaMallocManaged(&entry2nid, capacity * sizeof(int)));
-    for (size_t i = 0; i < capacity; ++i) { entry2nid[i] = -1; }
+    for (size_t i = 0; i < capacity; ++i) {
+      entry2nid[i] = static_cast<int>(-1);
+    }
   }
 
   ~HashTableGPU() {
@@ -78,33 +70,47 @@ public:
     cudaFree(entry2nid);
   }
 
-  __device__ int* getEntries() { return entry2nid; }
+  __host__ __device__ int* getEntries() { return entry2nid; }
+
   __device__ int16_t* getKeys() { return keys; }
+
   __device__ scalar_t* getValues() { return values; }
 
-  /** Assumes entry exists, no need to be atomic. **/
+  __device__ int16_t* lookupKey(int nid) {
+    return &keys[nid * pd];
+  }
+
   __device__ scalar_t* lookupValue(size_t h) {
     return &values[entry2nid[h] * vd];
   }
 
+  __device__ __forceinline__ size_t modhash(int16_t* key) {
+    size_t k = 0;
+    for (uint16_t i = 0; i < pd; ++i) {
+      k += static_cast<size_t>(key[i]);
+      k *= static_cast<size_t>(2531011);
+    }
+    return k % capacity;
+  }
+
   __device__ size_t insert(int16_t* key, int nid) {
-    size_t h = hash(key) % capacity;
+    size_t h = modhash(key);
 
     while (true) {
       int cas = atomicCAS(&entry2nid[h], -1, -2); // Returns the (old) value at location.
 
       if (cas == -2) { // Locked by another thread.
       } else if (cas == -1) { // Lock acquired.
-        for (uint16_t i = 0; i < pd; ++i) {
+        for (size_t i = 0; i < pd; ++i) {
           keys[nid * pd + i] = key[i];
         }
-        
+
         atomicExch(&entry2nid[h], nid);
 
         return h;
       } else { // Otherwise check if an existing key matches.
         bool match = true;
-        for (uint16_t i = 0; i < pd && match; ++i) {
+        for (size_t i = 0; i < pd && match; ++i) {
           match = keys[cas * pd + i] == key[i];
         }
         if (match) {
@@ -120,8 +126,8 @@ public:
     }
   }
 
-  __device__ int64_t get(int16_t* key) {
-    size_t h = hash(key) % capacity;
+  __device__ int get(int16_t* key) {
+    size_t h = modhash(key);
 
     while (true) {
       int nid = entry2nid[h];
@@ -130,11 +136,11 @@ public:
       }
 
       bool match = true;
-      for (uint16_t i = 0; i < pd && match; ++i) {
+      for (size_t i = 0; i < pd && match; ++i) {
         match = keys[nid * pd + i] == key[i];
       }
       if (match) {
-        return h;
+        return nid;
       }
 
       ++h;
@@ -157,8 +163,7 @@ __global__ void splat_kernel(
     const scalar_t* scaleFactor,
     const int16_t* canonical,
     HashTableGPU<scalar_t> table,
-    ReplayEntry<scalar_t>* replay,
-    int64_t* counter) {
+    ReplayEntry<scalar_t>* replay) {
   const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
   if (n >= ref.size(0)) {
     return;
@@ -238,23 +243,20 @@ __global__ void splat_kernel(
       key[i] = y[i] + canonical[r * (pd + 1) + rank[i]];
     }
 
-    size_t h = table.insert(key, nid);
-    /** 
-     * FIXME: Are we sure that all hashes are inserted only once
-     * and assigned the same entry "h"? Potentially not, and 
-     * we may need a second cleanup pass. Duplicate entries can
-     * arise due to linear probing. Sequential operation over 
-     * "nid" wouldn't have this problem.
-     **/
-    replay[nid].entry = h;
-    replay[nid].weight = bary[r];
-    
-    scalar_t* val = table.lookupValue(h);
-    for (uint16_t i = 0; i < vd; ++i) {
-      gpuAtomicAdd(&val[i], bary[r] * value[i]);
-    }
+    table.insert(key, nid);
 
-    gpuAtomicAdd(counter, static_cast<int64_t>(1));
+    /**
+     * TODO: 
+     **/
+    // size_t h = table.insert(key, nid);
+    // replay[nid].entry = h;
+    // replay[nid].weight = bary[r];
+    
+    // scalar_t* val = table.lookupValue(h);
+    // for (uint16_t i = 0; i < vd; ++i) {
+    //   gpuAtomicAdd(&val[i], bary[r] * value[i]);
+    // }
+    // printf("%lld (key = [%d], hash = %lld)\n", nid, key[0], table.modhash(key));
   }
 }
 
@@ -267,21 +269,18 @@ __global__ void process_hashtable_kernel(
     return;
   }
   const size_t r = blockIdx.y;
+  const size_t pd = table.pd;
 
-  const uint16_t pd = table.pd;
-  const size_t nid = n * pd + r;
+  const size_t id = n * (pd + 1) + r;
 
-  int* entries = table.getEntries();
-  int16_t* keys = table.getKeys();
-
-  /** 
-   * TODO: Combine any entries where the same hash + key have been mapped
-   * to different entries. We can point to the first found entry, but then
-   * also need to merge the value sums we've already computed. What's the
-   * right way?
+  /**
+   * NOTE: Hash table may have duplicate entries because
+   * linear probing is not atomic. Assign every entry to
+   * the first key match to correct this.
    **/
-  if (entries[nid] >= 0) {
-    entries[nid] = table.get(&keys[entries[nid] * pd]);
+  int* entries = table.getEntries();
+  if (entries[id] >= 0) {
+    entries[id] = table.get(table.lookupKey(entries[id]));
   }
 }
 
@@ -334,7 +333,7 @@ public:
 
     gpuErrchk(cudaMallocManaged(&scaleFactor, pd * sizeof(scalar_t)));
     for (uint16_t i = 0; i < pd; ++i) {
-      scaleFactor[i] = invStdDev / ((scalar_t) sqrt((i + 1) * (i + 2)));
+      scaleFactor[i] = invStdDev / static_cast<scalar_t>(sqrt((i + 1) * (i + 2)));
     }
 
     gpuErrchk(cudaMallocManaged(&canonical, (pd + 1) * (pd + 1) * sizeof(int16_t)));
@@ -348,17 +347,12 @@ public:
     }
 
     gpuErrchk(cudaMallocManaged(&replay, N * (pd + 1) * sizeof(ReplayEntry<scalar_t>)));
-
-    /** FIXME: only for debugging, remove after. **/
-    gpuErrchk(cudaMallocManaged(&counter, sizeof(int64_t)));
-    *counter = 0;
   }
 
   ~PermutohedralLatticeGPU() {
     cudaFree(scaleFactor);
     cudaFree(canonical);
     cudaFree(replay);
-    cudaFree(counter);
   }
 
   void splat(Tensor src, Tensor ref) {
@@ -382,11 +376,8 @@ public:
       scaleFactor,
       canonical,
       hashTable,
-      replay,
-      counter
+      replay
     );
-
-    gpuErrchk(cudaDeviceSynchronize());
 
     blocks.y = pd + 1;
     process_hashtable_kernel<scalar_t><<<blocks,threads>>>(
@@ -419,8 +410,6 @@ public:
   Tensor filter(Tensor src, Tensor ref) {
     splat(src, ref);
 
-    gpuErrchk(cudaDeviceSynchronize());
-
     for (uint16_t i = 0; i <= pd; ++i) {
       blur(i);
     }
@@ -429,12 +418,17 @@ public:
 
     gpuErrchk(cudaDeviceSynchronize());
 
-    std::cout << "Counter: " << *counter << std::endl;
+    int* entries = hashTable.getEntries();
+    std::set<int> s;
+    for (uint16_t i = 0; i < (N * (pd + 1)); ++i) {
+      s.insert(entries[i]);
+      // std::cout << entries[i] << " ";
+    }
+    std::cout << "Hash table size: " << s.size() << std::endl;
 
     return res;
   }
 private:
-  int64_t* counter;
   int16_t* _matK;
   Tensor res;
   // Matrices for internal lattice operations.

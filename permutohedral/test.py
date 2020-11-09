@@ -42,10 +42,10 @@ if __name__ == "__main__":
   root = Path(os.path.dirname(__file__)) / '..'
 
   with torch.no_grad():
-    # ref = torch.randn(100000, 20).float()
     ref = torch.arange(0., 5., 1.).unsqueeze(-1).float()
+    ref = torch.rand(1000, 20).float()
     src = (ref**2).cos()
 
   print(f'N: {ref.size(0)}, pD: {ref.size(1)}')
-  # test_cpu(root, src, ref)
+  test_cpu(root, src, ref)
   test_gpu(root, src, ref)
