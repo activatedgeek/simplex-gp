@@ -64,10 +64,14 @@ public:
     }
   }
 
-  ~HashTableGPU() {
-    cudaFree(keys);
-    cudaFree(values);
-    cudaFree(entry2nid);
+  /**
+   * NOTE: Copy constructor in kernel arguments triggers the destructor.
+   * Instead, manually free this in the PermutohedralLatticeGPU class.
+   **/
+  void free() {
+    gpuErrchk(cudaFree(keys));
+    gpuErrchk(cudaFree(values));
+    gpuErrchk(cudaFree(entry2nid));
   }
 
   __host__ __device__ int* getEntries() { return entry2nid; }
@@ -350,9 +354,10 @@ public:
   }
 
   ~PermutohedralLatticeGPU() {
-    cudaFree(scaleFactor);
-    cudaFree(canonical);
-    cudaFree(replay);
+    hashTable.free();
+    gpuErrchk(cudaFree(scaleFactor));
+    gpuErrchk(cudaFree(canonical));
+    gpuErrchk(cudaFree(replay));
   }
 
   void splat(Tensor src, Tensor ref) {
@@ -378,11 +383,13 @@ public:
       hashTable,
       replay
     );
+    gpuErrchk(cudaPeekAtLastError());
 
     blocks.y = pd + 1;
     process_hashtable_kernel<scalar_t><<<blocks,threads>>>(
       hashTable
     );
+    gpuErrchk(cudaPeekAtLastError());
   }
 
   void blur(uint16_t d) {
@@ -392,6 +399,7 @@ public:
     blur_kernel<scalar_t><<<blocks, threads>>>(
       hashTable
     );
+    gpuErrchk(cudaPeekAtLastError());
   }
 
   void slice(Tensor src, Tensor ref) {
@@ -405,6 +413,7 @@ public:
       hashTable,
       replay
     );
+    gpuErrchk(cudaPeekAtLastError());
   }
 
   Tensor filter(Tensor src, Tensor ref) {
