@@ -43,7 +43,7 @@ if __name__ == "__main__":
 
   with torch.no_grad():
     ref = torch.arange(0., 5., 1.).unsqueeze(-1).float()
-    # ref = torch.randn(5000, 10).float()
+    # ref = torch.rand(5000, 5).float()
     src = (ref**2).cos()
 
   print(f'N: {ref.size(0)}, pD: {ref.size(1)}')

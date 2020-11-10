@@ -157,7 +157,6 @@ public:
 
 template <typename scalar_t>
 __global__ void splat_kernel(
-    const PTAccessor2D(scalar_t) src,
     const PTAccessor2D(scalar_t) ref,
     PTAccessor2D(scalar_t) matE,
     PTAccessor2D(int16_t) matY,
@@ -174,9 +173,7 @@ __global__ void splat_kernel(
   }
 
   const uint16_t pd = ref.size(1);
-  const uint16_t vd = src.size(1);
   auto pos = ref[n];
-  auto value = src[n];
   auto elevated = matE[n];
   auto y = matY[n];
   auto rank = matR[n];
@@ -247,26 +244,15 @@ __global__ void splat_kernel(
       key[i] = y[i] + canonical[r * (pd + 1) + rank[i]];
     }
 
-    table.insert(key, nid);
-
-    /**
-     * TODO: 
-     **/
-    // size_t h = table.insert(key, nid);
-    // replay[nid].entry = h;
-    // replay[nid].weight = bary[r];
-    
-    // scalar_t* val = table.lookupValue(h);
-    // for (uint16_t i = 0; i < vd; ++i) {
-    //   gpuAtomicAdd(&val[i], bary[r] * value[i]);
-    // }
-    // printf("%lld (key = [%d], hash = %lld)\n", nid, key[0], table.modhash(key));
+    size_t h = table.insert(key, nid);
+    replay[nid].entry = h;
+    replay[nid].weight = bary[r];
   }
 }
 
 template <typename scalar_t>
 __global__ void process_hashtable_kernel(
-    HashTableGPU<scalar_t> table) {
+  HashTableGPU<scalar_t> table) {
   
   const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
   if (n >= table.N) {
@@ -289,11 +275,37 @@ __global__ void process_hashtable_kernel(
 }
 
 template <typename scalar_t>
+__global__ void splat_value_kernel(
+    const PTAccessor2D(scalar_t) src,
+    HashTableGPU<scalar_t> table,
+    ReplayEntry<scalar_t>* replay) {
+  
+  const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
+  if (n >= table.N) {
+    return;
+  }
+  const size_t r = blockIdx.y;
+  const size_t pd = table.pd;
+  const size_t vd = src.size(1);
+  const size_t nid = n * (pd + 1) + r;
+  auto value = src[n];
+
+  scalar_t* val = table.lookupValue(replay[nid].entry);
+  for (size_t i = 0; i < vd; ++i) {
+    gpuAtomicAdd(&val[i], replay[nid].weight * value[i]);
+  }
+}
+
+template <typename scalar_t>
 __global__ void blur_kernel(
     HashTableGPU<scalar_t> table) {
-  /**
-   * TODO: Blur kernel.
-   **/
+  const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
+  if (n >= table.N) {
+    return;
+  }
+  // const size_t r = blockIdx.y;
+  // const size_t pd = table.pd;
+  // const size_t nid = n * (pd + 1) + r;
 }
 
 template <typename scalar_t>
@@ -371,34 +383,30 @@ public:
     dim3 blocks((N + threads.x - 1) / threads.x);
 
     splat_kernel<scalar_t><<<blocks, threads>>>(
-      Ten2PTAccessor2D(scalar_t,src),
       Ten2PTAccessor2D(scalar_t,ref),
-      Ten2PTAccessor2D(scalar_t,_matE),
-      Ten2PTAccessor2D(int16_t,_matY),
-      Ten2PTAccessor2D(int16_t,_matR),
-      Ten2PTAccessor2D(scalar_t,_matB),
+      Ten2PTAccessor2D(scalar_t,_matE), Ten2PTAccessor2D(int16_t,_matY),
+      Ten2PTAccessor2D(int16_t,_matR), Ten2PTAccessor2D(scalar_t,_matB),
       _matK,
-      scaleFactor,
-      canonical,
-      hashTable,
-      replay
-    );
+      scaleFactor, canonical,
+      hashTable, replay);
     gpuErrchk(cudaPeekAtLastError());
 
     blocks.y = pd + 1;
-    process_hashtable_kernel<scalar_t><<<blocks,threads>>>(
-      hashTable
-    );
+
+    process_hashtable_kernel<scalar_t><<<blocks,threads>>>(hashTable);
+    gpuErrchk(cudaPeekAtLastError());
+
+    splat_value_kernel<scalar_t><<<blocks,threads>>>(
+      Ten2PTAccessor2D(scalar_t,src),
+      hashTable, replay);
     gpuErrchk(cudaPeekAtLastError());
   }
 
   void blur(uint16_t d) {
     const dim3 threads(BLOCK_SIZE);
-    const dim3 blocks((N + threads.x - 1) / threads.x);
+    const dim3 blocks((N + threads.x - 1) / threads.x, pd + 1);
 
-    blur_kernel<scalar_t><<<blocks, threads>>>(
-      hashTable
-    );
+    blur_kernel<scalar_t><<<blocks, threads>>>(hashTable);
     gpuErrchk(cudaPeekAtLastError());
   }
 
@@ -410,9 +418,7 @@ public:
 
     slice_kernel<scalar_t><<<blocks, threads>>>(
       Ten2PTAccessor2D(scalar_t,res),
-      hashTable,
-      replay
-    );
+      hashTable, replay);
     gpuErrchk(cudaPeekAtLastError());
   }
 
@@ -427,13 +433,12 @@ public:
 
     gpuErrchk(cudaDeviceSynchronize());
 
-    int* entries = hashTable.getEntries();
-    std::set<int> s;
-    for (uint16_t i = 0; i < (N * (pd + 1)); ++i) {
-      s.insert(entries[i]);
-      // std::cout << entries[i] << " ";
-    }
-    std::cout << "Hash table size: " << s.size() << std::endl;
+    // int* entries = hashTable.getEntries();
+    // std::set<int> s;
+    // for (size_t i = 0; i < (N * (pd + 1)); ++i) {
+    //   s.insert(entries[i]);
+    // }
+    // std::cout << "Hash table size: " << s.size() << std::endl;
 
     return res;
   }
