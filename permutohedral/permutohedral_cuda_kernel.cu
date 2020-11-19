@@ -6,9 +6,9 @@
 #include <THC/THCAtomics.cuh>
 
 using at::Tensor;
-typedef std::chrono::high_resolution_clock Clock;
+// typedef std::chrono::high_resolution_clock Clock;
 
-#define NANO_CAST(d) std::chrono::duration_cast<std::chrono::nanoseconds>(d)
+// #define NANO_CAST(d) std::chrono::duration_cast<std::chrono::nanoseconds>(d)
 #define BLOCK_SIZE 1024
 #define PTAccessor2D(T) at::PackedTensorAccessor32<T,2,at::RestrictPtrTraits>
 #define Accessor1Di(T) at::TensorAccessor<T,1,at::RestrictPtrTraits,int32_t>
@@ -38,6 +38,7 @@ class HashTableGPU {
 private:
   int16_t* keys;
   scalar_t* values;
+  scalar_t* newValues;
 
   /**
    * Each point has at most (pd + 1) neighbors.
@@ -58,6 +59,8 @@ public:
       values[i] = static_cast<scalar_t>(0.0);
     }
 
+    gpuErrchk(cudaMallocManaged(&newValues, capacity * vd * sizeof(scalar_t)));
+
     gpuErrchk(cudaMallocManaged(&entry2nid, capacity * sizeof(int)));
     for (size_t i = 0; i < capacity; ++i) {
       entry2nid[i] = static_cast<int>(-1);
@@ -71,21 +74,31 @@ public:
   void free() {
     gpuErrchk(cudaFree(keys));
     gpuErrchk(cudaFree(values));
+    gpuErrchk(cudaFree(newValues));
     gpuErrchk(cudaFree(entry2nid));
   }
 
-  __host__ __device__ int* getEntries() { return entry2nid; }
+  __host__ __forceinline__ __device__ int* getEntries() { return entry2nid; }
 
-  __device__ int16_t* getKeys() { return keys; }
-
-  __device__ scalar_t* getValues() { return values; }
-
-  __device__ int16_t* lookupKey(int nid) {
-    return &keys[nid * pd];
+  __device__ __forceinline__ int16_t* lookupKey(size_t h) {
+    if (entry2nid[h] == -1) {
+      return nullptr;
+    }
+    return &keys[entry2nid[h] * pd];
   }
 
-  __device__ scalar_t* lookupValue(size_t h) {
+  __device__ __forceinline__ scalar_t* lookupValue(size_t h) {
+    if (entry2nid[h] == -1) {
+      return nullptr;
+    }
     return &values[entry2nid[h] * vd];
+  }
+
+  __device__ __forceinline__ scalar_t* lookupNewValue(size_t h) {
+    if (entry2nid[h] == -1) {
+      return nullptr;
+    }
+    return &newValues[entry2nid[h] * vd];
   }
 
   __device__ __forceinline__ size_t modhash(int16_t* key) {
@@ -270,7 +283,7 @@ __global__ void process_hashtable_kernel(
    **/
   int* entries = table.getEntries();
   if (entries[id] >= 0) {
-    entries[id] = table.get(table.lookupKey(entries[id]));
+    entries[id] = table.get(table.lookupKey(id));
   }
 }
 
@@ -298,14 +311,36 @@ __global__ void splat_value_kernel(
 
 template <typename scalar_t>
 __global__ void blur_kernel(
-    HashTableGPU<scalar_t> table) {
+    HashTableGPU<scalar_t> table,
+    const size_t d,
+    const size_t order) {
   const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
   if (n >= table.N) {
     return;
   }
-  // const size_t r = blockIdx.y;
-  // const size_t pd = table.pd;
-  // const size_t nid = n * (pd + 1) + r;
+  const size_t r = blockIdx.y;
+  const size_t pd = table.pd;
+
+  const size_t id = n * (pd + 1) + r;
+
+  const int16_t* key = table.lookupKey(id);
+  if (!key) {
+    return;
+  }
+
+  for (auto o = -order; o <= order; ++o) {
+    for (size_t p = 0; p < pd; ++p) {
+      /** TODO: modify the neighbor key. **/
+      // neighbor[p] = key[p] - o;
+    }
+    /** NOTE: Why do we need this? **/
+    // neighbor[d] = key[d] + id * pd;
+
+    // int h = table.get(neighbor);
+    for (size_t v = 0; v < vd; ++v) {
+      // gpuAtomicAdd(&newVal[v], c * val[v]);
+    }
+  }
 }
 
 template <typename scalar_t>
@@ -402,11 +437,12 @@ public:
     gpuErrchk(cudaPeekAtLastError());
   }
 
-  void blur(uint16_t d) {
+  void blur(size_t d, size_t order) {
     const dim3 threads(BLOCK_SIZE);
     const dim3 blocks((N + threads.x - 1) / threads.x, pd + 1);
 
-    blur_kernel<scalar_t><<<blocks, threads>>>(hashTable);
+    blur_kernel<scalar_t><<<blocks, threads>>>(
+      hashTable, d, order);
     gpuErrchk(cudaPeekAtLastError());
   }
 
@@ -422,23 +458,23 @@ public:
     gpuErrchk(cudaPeekAtLastError());
   }
 
-  Tensor filter(Tensor src, Tensor ref) {
+  Tensor filter(Tensor src, Tensor ref, size_t order = 2) {
     splat(src, ref);
 
-    for (uint16_t i = 0; i <= pd; ++i) {
-      blur(i);
+    for (size_t i = 0; i <= pd; ++i) {
+      blur(i, order);
     }
 
     slice(src, ref);
 
     gpuErrchk(cudaDeviceSynchronize());
 
-    // int* entries = hashTable.getEntries();
-    // std::set<int> s;
-    // for (size_t i = 0; i < (N * (pd + 1)); ++i) {
-    //   s.insert(entries[i]);
-    // }
-    // std::cout << "Hash table size: " << s.size() << std::endl;
+    int* entries = hashTable.getEntries();
+    std::set<int> s;
+    for (size_t i = 0; i < (N * (pd + 1)); ++i) {
+      s.insert(entries[i]);
+    }
+    std::cout << "Hash table size: " << s.size() << std::endl;
 
     return res;
   }
