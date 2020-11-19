@@ -157,7 +157,7 @@ public:
         match = keys[nid * pd + i] == key[i];
       }
       if (match) {
-        return nid;
+        return h;
       }
 
       ++h;
@@ -283,7 +283,7 @@ __global__ void process_hashtable_kernel(
    **/
   int* entries = table.getEntries();
   if (entries[id] >= 0) {
-    entries[id] = table.get(table.lookupKey(id));
+    entries[id] = entries[table.get(table.lookupKey(id))];
   }
 }
 
@@ -313,32 +313,39 @@ template <typename scalar_t>
 __global__ void blur_kernel(
     HashTableGPU<scalar_t> table,
     const size_t d,
-    const size_t order) {
+    const size_t order,
+    int16_t* neighbors,
+    const scalar_t* zero) {
   const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
   if (n >= table.N) {
     return;
   }
   const size_t r = blockIdx.y;
   const size_t pd = table.pd;
+  const size_t vd = table.vd;
 
   const size_t id = n * (pd + 1) + r;
+  int16_t* neighbor = &neighbors[id * (pd + 1)];
 
   const int16_t* key = table.lookupKey(id);
   if (!key) {
     return;
   }
 
-  for (auto o = -order; o <= order; ++o) {
-    for (size_t p = 0; p < pd; ++p) {
-      /** TODO: modify the neighbor key. **/
-      // neighbor[p] = key[p] - o;
-    }
-    /** NOTE: Why do we need this? **/
-    // neighbor[d] = key[d] + id * pd;
+  /** TODO: need to reset these to zero? **/
+  scalar_t* newVal = table.lookupNewValue(id);
 
-    // int h = table.get(neighbor);
+  for (int16_t o = -order; o <= order; ++o) {
+    for (size_t p = 0; p < pd; ++p) {
+      neighbor[p] = key[p] - o;
+    }
+    neighbor[d] = key[d] + o * pd;
+
+    int h = table.get(neighbor);
+    const scalar_t* val = h >= 0 ? table.lookupValue(h) : zero;
     for (size_t v = 0; v < vd; ++v) {
-      // gpuAtomicAdd(&newVal[v], c * val[v]);
+      /** TODO: get binom coefficients **/
+      gpuAtomicAdd(&newVal[v], val[v]);
     }
   }
 }
@@ -353,14 +360,14 @@ __global__ void slice_kernel(
     return;
   }
 
-  const uint16_t pd = table.pd;
-  const uint16_t vd = res.size(1);
+  const size_t pd = table.pd;
+  const size_t vd = res.size(1);
   auto out = res[n];
 
-  for (uint16_t r = 0; r <= pd; ++r) {
+  for (size_t r = 0; r <= pd; ++r) {
     size_t nid = n * (pd + 1) + r;
     scalar_t* val = table.lookupValue(replay[nid].entry);
-    for (uint16_t j = 0; j < vd; ++j) {
+    for (size_t j = 0; j < vd; ++j) {
       out[j] += replay[nid].weight * val[j] / (1 + powf(2, -pd));
     }
   }
@@ -408,10 +415,11 @@ public:
   }
 
   void splat(Tensor src, Tensor ref) {
-    _matE = torch::zeros(TenSize2D(N, pd + 1), TenOptType(ref.dtype(),ref.device()));
-    _matY = torch::zeros(TenSize2D(N, pd + 1), TenOptType(torch::kI16,ref.device()));
-    _matR = torch::zeros(TenSize2D(N, pd + 1), TenOptType(torch::kI16,ref.device()));
-    _matB = torch::zeros(TenSize2D(N, pd + 2), TenOptType(ref.dtype(),ref.device()));
+    Tensor _matE = torch::zeros(TenSize2D(N, pd + 1), TenOptType(ref.dtype(),ref.device()));
+    Tensor _matY = torch::zeros(TenSize2D(N, pd + 1), TenOptType(torch::kI16,ref.device()));
+    Tensor _matR = torch::zeros(TenSize2D(N, pd + 1), TenOptType(torch::kI16,ref.device()));
+    Tensor _matB = torch::zeros(TenSize2D(N, pd + 2), TenOptType(ref.dtype(),ref.device()));
+    int16_t* _matK = nullptr;
     gpuErrchk(cudaMallocManaged(&_matK, N * pd * sizeof(int16_t)));
 
     const dim3 threads(BLOCK_SIZE);
@@ -435,19 +443,31 @@ public:
       Ten2PTAccessor2D(scalar_t,src),
       hashTable, replay);
     gpuErrchk(cudaPeekAtLastError());
+
+    gpuErrchk(cudaFree(_matK));
   }
 
   void blur(size_t d, size_t order) {
+    int16_t* _matNeK;
+    gpuErrchk(cudaMallocManaged(&_matNeK, N * (pd + 1) * sizeof(int16_t)));
+
+    scalar_t* zero;
+    gpuErrchk(cudaMallocManaged(&zero, vd * sizeof(scalar_t)));
+
     const dim3 threads(BLOCK_SIZE);
     const dim3 blocks((N + threads.x - 1) / threads.x, pd + 1);
 
     blur_kernel<scalar_t><<<blocks, threads>>>(
-      hashTable, d, order);
+      hashTable, d, order,
+      _matNeK, zero);
     gpuErrchk(cudaPeekAtLastError());
+
+    gpuErrchk(cudaFree(zero));
+    gpuErrchk(cudaFree(_matNeK));
   }
 
-  void slice(Tensor src, Tensor ref) {
-    res = torch::zeros(TenSize2D(N, vd), TenOptType(src.dtype(),src.device()));
+  Tensor slice(Tensor src, Tensor ref) {
+    Tensor res = torch::zeros(TenSize2D(N, vd), TenOptType(src.dtype(),src.device()));
 
     const dim3 threads(BLOCK_SIZE);
     const dim3 blocks((N + threads.x - 1) / threads.x);
@@ -456,33 +476,30 @@ public:
       Ten2PTAccessor2D(scalar_t,res),
       hashTable, replay);
     gpuErrchk(cudaPeekAtLastError());
-  }
-
-  Tensor filter(Tensor src, Tensor ref, size_t order = 2) {
-    splat(src, ref);
-
-    for (size_t i = 0; i <= pd; ++i) {
-      blur(i, order);
-    }
-
-    slice(src, ref);
 
     gpuErrchk(cudaDeviceSynchronize());
+
+    return res;
+  }
+
+  Tensor filter(Tensor src, Tensor ref, size_t order = 1) {
+    splat(src, ref);
+
+    for (size_t d = 0; d <= pd; ++d) {
+      blur(d, order);
+    }
+
+    Tensor res = slice(src, ref);
 
     int* entries = hashTable.getEntries();
     std::set<int> s;
     for (size_t i = 0; i < (N * (pd + 1)); ++i) {
-      s.insert(entries[i]);
+      if (entries[i] >= 0) { s.insert(entries[i]); }
     }
     std::cout << "Hash table size: " << s.size() << std::endl;
 
     return res;
   }
-private:
-  int16_t* _matK;
-  Tensor res;
-  // Matrices for internal lattice operations.
-  Tensor _matE, _matY, _matR, _matB;
 };
 
 Tensor permutohedral_cuda_filter(Tensor src, Tensor ref) {
