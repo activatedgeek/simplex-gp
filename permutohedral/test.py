@@ -34,7 +34,7 @@ def test_gpu(root, src, ref):
 
   start = timer()
 
-  result = gpu_lattice.filter(src, ref)
+  result = gpu_lattice.filter(src, ref, 1)
 
   print(f'GPU finished in: {(timer() - start):.6f}s')
 

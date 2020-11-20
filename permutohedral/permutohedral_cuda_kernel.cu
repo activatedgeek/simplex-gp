@@ -27,6 +27,29 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
    }
 }
 
+template<typename scalar_t>
+__device__ __forceinline__ scalar_t get_binom_coef(const size_t order, const int16_t k) {
+  // assert(order<6);
+
+  int binom_coef[6][6] = {
+    {1,0,0,0,0,0},
+    {2,1,0,0,0,0},
+    {6,4,1,0,0,0},
+    {20,15,6,1,0,0},
+    {70,56,28,8,1,0},
+    {252,210,120,45,10,1}
+  };
+
+  scalar_t norm = static_cast<scalar_t>(binom_coef[order][0]);
+  return static_cast<scalar_t>(binom_coef[order][k > 0 ? k : -k]) / norm;
+}
+
+template<typename scalar_t>
+inline scalar_t get_binom_var(size_t order) {
+  // assert(order<6);
+  return static_cast<scalar_t>(order) / 2.0;
+}
+
 template <typename scalar_t>
 struct ReplayEntry{
   size_t entry;
@@ -60,10 +83,22 @@ public:
     }
 
     gpuErrchk(cudaMallocManaged(&newValues, capacity * vd * sizeof(scalar_t)));
+    for (size_t i = 0; i < capacity * vd; ++i) {
+      newValues[i] = static_cast<scalar_t>(0.0);
+    }
 
     gpuErrchk(cudaMallocManaged(&entry2nid, capacity * sizeof(int)));
     for (size_t i = 0; i < capacity; ++i) {
       entry2nid[i] = static_cast<int>(-1);
+    }
+  }
+
+  void swapValues() {
+    scalar_t* tmp = values;
+    values = newValues;
+    newValues = tmp;
+    for (size_t i = 0; i < capacity * vd; ++i) {
+      newValues[i] = static_cast<scalar_t>(0.0);
     }
   }
 
@@ -332,7 +367,6 @@ __global__ void blur_kernel(
     return;
   }
 
-  /** TODO: need to reset these to zero? **/
   scalar_t* newVal = table.lookupNewValue(id);
 
   for (int16_t o = -order; o <= order; ++o) {
@@ -343,9 +377,9 @@ __global__ void blur_kernel(
 
     int h = table.get(neighbor);
     const scalar_t* val = h >= 0 ? table.lookupValue(h) : zero;
+    scalar_t c = get_binom_coef<scalar_t>(order, o);
     for (size_t v = 0; v < vd; ++v) {
-      /** TODO: get binom coefficients **/
-      gpuAtomicAdd(&newVal[v], val[v]);
+      gpuAtomicAdd(&newVal[v], c * val[v]);
     }
   }
 }
@@ -377,17 +411,16 @@ template <typename scalar_t>
 class PermutohedralLatticeGPU {
 private:
   uint16_t pd, vd;
-  size_t N;
+  size_t N, order;
   scalar_t* scaleFactor;
   int16_t* canonical;
   HashTableGPU<scalar_t> hashTable;
   ReplayEntry<scalar_t>* replay;
 public:
-  PermutohedralLatticeGPU(uint16_t pd_, uint16_t vd_, size_t N_): 
-    pd(pd_), vd(vd_), N(N_), hashTable(HashTableGPU<scalar_t>(pd_, vd_, N_)) {
+  PermutohedralLatticeGPU(uint16_t pd_, uint16_t vd_, size_t N_, const size_t o_): 
+    pd(pd_), vd(vd_), N(N_), order(o_), hashTable(HashTableGPU<scalar_t>(pd_, vd_, N_)) {
     
-    /** TODO: Adjust this scale factor for larger kernel stencils. **/
-    scalar_t invStdDev = (pd + 1) * sqrt(2.0f / 3);
+    scalar_t invStdDev = (pd + 1) * sqrt(get_binom_var<scalar_t>(order) +  1.0f / 6);
 
     gpuErrchk(cudaMallocManaged(&scaleFactor, pd * sizeof(scalar_t)));
     for (uint16_t i = 0; i < pd; ++i) {
@@ -447,7 +480,7 @@ public:
     gpuErrchk(cudaFree(_matK));
   }
 
-  void blur(size_t d, size_t order) {
+  void blur(size_t d) {
     int16_t* _matNeK;
     gpuErrchk(cudaMallocManaged(&_matNeK, N * (pd + 1) * sizeof(int16_t)));
 
@@ -464,6 +497,8 @@ public:
 
     gpuErrchk(cudaFree(zero));
     gpuErrchk(cudaFree(_matNeK));
+
+    hashTable.swapValues();
   }
 
   Tensor slice(Tensor src, Tensor ref) {
@@ -482,11 +517,11 @@ public:
     return res;
   }
 
-  Tensor filter(Tensor src, Tensor ref, size_t order = 1) {
+  Tensor filter(Tensor src, Tensor ref) {
     splat(src, ref);
 
     for (size_t d = 0; d <= pd; ++d) {
-      blur(d, order);
+      blur(d);
     }
 
     Tensor res = slice(src, ref);
@@ -502,12 +537,12 @@ public:
   }
 };
 
-Tensor permutohedral_cuda_filter(Tensor src, Tensor ref) {
+Tensor permutohedral_cuda_filter(Tensor src, Tensor ref, const size_t order) {
   Tensor out;
 
   AT_DISPATCH_FLOATING_TYPES(src.scalar_type(), "permutohedral_lattice", ([&]{
     PermutohedralLatticeGPU<scalar_t> lattice(ref.size(-1), src.size(-1),
-                                              src.size(0));
+                                              src.size(0), order);
     out = lattice.filter(src, ref);
   }));
 

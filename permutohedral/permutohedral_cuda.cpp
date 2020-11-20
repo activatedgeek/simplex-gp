@@ -7,15 +7,13 @@
 using at::Tensor;
 
 // CUDA kernel forward declarations
-Tensor permutohedral_cuda_filter(Tensor src, Tensor ref);
+Tensor permutohedral_cuda_filter(Tensor src, Tensor ref, const size_t order);
 
-Tensor filter(Tensor src, Tensor ref) {
+Tensor filter(Tensor src, Tensor ref, const size_t order = 1) {
   CHECK_INPUT(src);
   CHECK_INPUT(ref);
 
-  
-
-  return permutohedral_cuda_filter(src, ref);
+  return permutohedral_cuda_filter(src, ref, order);
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
