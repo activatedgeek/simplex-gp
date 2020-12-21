@@ -397,12 +397,14 @@ __global__ void slice_kernel(
   const size_t pd = table.pd;
   const size_t vd = res.size(1);
   auto out = res[n];
+  /** NOTE: magic? scaling constant. **/
+  const scalar_t scale = 1.0 + pow(2.0, - (scalar_t) pd);
 
   for (size_t r = 0; r <= pd; ++r) {
     size_t nid = n * (pd + 1) + r;
     scalar_t* val = table.lookupValue(replay[nid].entry);
     for (size_t j = 0; j < vd; ++j) {
-      out[j] += replay[nid].weight * val[j] / (1 + powf(2, -pd));
+      out[j] += (replay[nid].weight * val[j]) / scale;
     }
   }
 }
@@ -486,6 +488,9 @@ public:
 
     scalar_t* zero;
     gpuErrchk(cudaMallocManaged(&zero, vd * sizeof(scalar_t)));
+    for (size_t d = 0; d < vd; ++d) {
+      zero[d] = static_cast<scalar_t>(0.0);
+    }
 
     const dim3 threads(BLOCK_SIZE);
     const dim3 blocks((N + threads.x - 1) / threads.x, pd + 1);
@@ -526,12 +531,12 @@ public:
 
     Tensor res = slice(src, ref);
 
-    // int* entries = hashTable.getEntries();
-    // std::set<int> s;
-    // for (size_t i = 0; i < (N * (pd + 1)); ++i) {
-    //   if (entries[i] >= 0) { s.insert(entries[i]); }
-    // }
-    // std::cout << "Hash table size: " << s.size() << std::endl;
+    int* entries = hashTable.getEntries();
+    std::set<int> s;
+    for (size_t i = 0; i < (N * (pd + 1)); ++i) {
+      if (entries[i] >= 0) { s.insert(entries[i]); }
+    }
+    std::cout << "Hash table size: " << s.size() << std::endl;
 
     return res;
   }

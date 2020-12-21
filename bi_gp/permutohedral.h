@@ -315,7 +315,7 @@ public:
         lattice.slice_ts = NANO_CAST(Clock::now() - start_ts).count();
 
         at::Tensor output = torch::from_blob(outArray, {n, srcChannels}, arr_deleter).to(AT_FLOAT_TYPE);
-        at::TensorAccessor<float_type, 2> fa = output.accessor<float_type, 2>();
+        // at::TensorAccessor<float_type, 2> fa = output.accessor<float_type, 2>();
         //printf("%.6f",fa[0][0]);
         // at::Tensor output = at::empty({n,srcChannels});
         // auto out_iter = output.accessor<float_type,2>();
@@ -342,13 +342,13 @@ public:
         //     }
         // }
 
-        size_t total = lattice.all_splat_ts + lattice.blur_ts + lattice.slice_ts;
+        // size_t total = lattice.all_splat_ts + lattice.blur_ts + lattice.slice_ts;
 
-        std::cout << "Init: " << lattice.init_ts << " ns\n";
-        std::cout << "All Splat: " << lattice.all_splat_ts << " ns, " << (float_type(lattice.all_splat_ts) / total) << "\n";
-        std::cout << "Avg Hashmap/Splat Ratio: " << lattice.avg_ratio_ts << "\n";
-        std::cout << "Blur: " << lattice.blur_ts << " ns, " << (float_type(lattice.blur_ts) / total) << "\n";
-        std::cout << "Slice: " << lattice.slice_ts << " ns, " << (float_type(lattice.slice_ts) / total) << "\n";
+        // std::cout << "Init: " << lattice.init_ts << " ns\n";
+        // std::cout << "All Splat: " << lattice.all_splat_ts << " ns, " << (float_type(lattice.all_splat_ts) / total) << "\n";
+        // std::cout << "Avg Hashmap/Splat Ratio: " << lattice.avg_ratio_ts << "\n";
+        // std::cout << "Blur: " << lattice.blur_ts << " ns, " << (float_type(lattice.blur_ts) / total) << "\n";
+        // std::cout << "Slice: " << lattice.slice_ts << " ns, " << (float_type(lattice.slice_ts) / total) << "\n";
 
         return output;
     }

@@ -7,14 +7,16 @@ from timeit import default_timer as timer
 
 def test_cpu(root, src, ref):
   cpu_lattice = load(name="lattice",
-                     verbose=True,
-                     sources=[(root / 'bi_gp' / 'lattice.cpp')])
+                    #  verbose=True,
+                     sources=[(root / '..' / 'lattice.cpp')])
   
   start = timer()
 
-  cpu_lattice.filter(src, ref, 1)
+  res = cpu_lattice.filter(src, ref, 1)
 
-  print(f'CPU finished in: {(timer() - start):.6f}s')
+  # print(f'CPU finished in: {(timer() - start):.6f}s')
+
+  return res
 
 
 def test_gpu(root, src, ref):
@@ -26,20 +28,22 @@ def test_gpu(root, src, ref):
   ref = ref.to(device)
 
   gpu_lattice = load(name="gpu_lattice",
-                     verbose=True,
+                    #  verbose=True,
                      sources=[
-                       (root / 'permutohedral' / 'permutohedral_cuda.cpp'),
-                       (root / 'permutohedral' / 'permutohedral_cuda_kernel.cu')
+                       (root / 'permutohedral_cuda.cpp'),
+                       (root / 'permutohedral_cuda_kernel.cu')
                      ])
 
   start = timer()
 
-  result = gpu_lattice.filter(src, ref, 1)
+  res = gpu_lattice.filter(src, ref, 1)
 
-  print(f'GPU finished in: {(timer() - start):.6f}s')
+  # print(f'GPU finished in: {(timer() - start):.6f}s')
+
+  return res
 
 if __name__ == "__main__":
-  root = Path(os.path.dirname(__file__)) / '..'
+  root = Path(os.path.dirname(__file__))
 
   with torch.no_grad():
     ref = torch.arange(0., 5., 1.).unsqueeze(-1).float()
@@ -47,5 +51,6 @@ if __name__ == "__main__":
     src = (ref**2).cos()
 
   print(f'N: {ref.size(0)}, pD: {ref.size(1)}')
-  # test_cpu(root, src, ref)
-  test_gpu(root, src, ref)
+  print(test_cpu(root, src, ref))
+  print('-------------------------------')
+  print(test_gpu(root, src, ref))
