@@ -87,9 +87,8 @@ def main(dataset: str = None, data_dir: str = None,
 
     set_seeds(seed)
 
-    ## Disable GPU for now.
-    # device = "cuda" if torch.cuda.is_available() else "cpu"
-    device = "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # device = "cpu"
 
     train_dataset = UCIDataset.create(dataset, uci_data_dir=data_dir,
                                       mode="train", device=device)

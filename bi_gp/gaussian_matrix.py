@@ -11,7 +11,12 @@ import torch.multiprocessing as mp
 import math
 import gpytorch
 #import multiprocessing as mp
-lattice = load(name="lattice",sources=[f'{os.path.dirname(__file__)}/lattice.cpp'])
+
+# lattice = load(name="lattice", verbose=True, sources=[
+#                 os.path.join(os.path.dirname(__file__), 'lattice.cpp')])
+lattice = load(name="gpu_lattice", verbose=True, sources=[
+                    os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda.cpp'),
+                    os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda_kernel.cu')])
 latticefilter = lattice.filter
 
 class LatticeGaussian(nn.Module):
@@ -120,8 +125,7 @@ class LatticeFilter(Function):
         assert source.shape[0] == reference.shape[0], \
             "Incompatible shapes {}, and {}".format(source.shape,reference.shape)
         ctx.save_for_backward(source,reference) # TODO: add batch compatibility
-        s0 = time.time()
-        filtered_output = latticefilter(source,reference)
+        filtered_output = latticefilter(source,reference.contiguous(),int(1))
         return filtered_output
     @staticmethod
     def backward(ctx,grad_output):
@@ -134,7 +138,7 @@ class LatticeFilter(Function):
             d = ref.shape[-1]
             grad_source = grad_reference = None
             if ctx.needs_input_grad[0] and not ctx.needs_input_grad[1]:
-                grad_source = latticefilter(g,ref)#ctx.W@g#latticefilter(g,ref) # Matrix is symmetric
+                grad_source = latticefilter(g,ref,1)#ctx.W@g#latticefilter(g,ref) # Matrix is symmetric
             if ctx.needs_input_grad[1]: # try torch.no_grad ()
                 s = []
                 s.append(time.time())
@@ -146,7 +150,7 @@ class LatticeFilter(Function):
                 #n x (L+Ld+L+Ld):   n x L       n x Ld     n x L   n x Ld 
                 all_ = torch.cat([g,grad_and_ref_flat,src,src_and_ref_flat],dim=-1)
                 s.append(time.time())
-                filtered_all = latticefilter(all_,ref)#ctx.W@all_#torch.randn_like(all_)#
+                filtered_all = latticefilter(all_,ref,1)#ctx.W@all_#torch.randn_like(all_)#
                 s.append(time.time())
                 [wg,wgf,ws,wsf] = torch.split(filtered_all,[L,L*d,L,L*d],dim=-1)
                 s.append(time.time())
