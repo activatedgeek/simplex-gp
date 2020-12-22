@@ -12,11 +12,11 @@ import math
 import gpytorch
 #import multiprocessing as mp
 
-# lattice = load(name="lattice", verbose=True, sources=[
-#                 os.path.join(os.path.dirname(__file__), 'lattice.cpp')])
-lattice = load(name="gpu_lattice", verbose=True, sources=[
-                    os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda.cpp'),
-                    os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda_kernel.cu')])
+lattice = load(name="lattice", verbose=True, sources=[
+                os.path.join(os.path.dirname(__file__), 'lattice.cpp')])
+# lattice = load(name="gpu_lattice", verbose=True, sources=[
+#                     os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda.cpp'),
+#                     os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda_kernel.cu')])
 latticefilter = lattice.filter
 
 class LatticeGaussian(nn.Module):
