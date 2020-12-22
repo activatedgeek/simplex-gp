@@ -1,0 +1,27 @@
+# method: random
+method: grid
+parameters:
+  dataset:
+    values:
+      # - 3droad
+      - elevators
+      - houseelectric
+      - keggdirected
+      - kin40k_all
+      - precipitation3d_all
+      - protein
+      - pumadyn32nm_all
+  epochs:
+    value: 100
+  lr:
+    value: 0.05
+  lanc_iter:
+    value: 100
+  pre_size:
+    value: 20
+program: experiments/train_skip.py
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args}

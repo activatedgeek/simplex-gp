@@ -13,7 +13,7 @@ from utils import set_seeds, standardize, UCIDataset
 class BilateralGPModel(gp.models.ExactGP):
     def __init__(self, train_x, train_y):
         likelihood = gp.likelihoods.GaussianLikelihood(
-                      noise_constraint=gp.constraints.GreaterThan(1e-2))
+                      noise_constraint=gp.constraints.GreaterThan(1e-4))
         super().__init__(train_x, train_y, likelihood)
         self.mean_module = gp.means.ConstantMean()
         self.covar_module = gp.kernels.ScaleKernel(BilateralKernel(ard_num_dims=train_x.size(-1)))

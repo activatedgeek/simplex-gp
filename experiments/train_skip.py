@@ -1,18 +1,18 @@
 import os
 import torch
-from torch.utils.tensorboard import SummaryWriter
 import gpytorch as gp
 from tqdm.auto import tqdm
 import wandb
 from pathlib import Path
 from timeit import default_timer as timer
 
-from utils import set_seeds, log_scalar_dict, standardize, UCIDataset
+from utils import set_seeds, standardize, UCIDataset
 
 
 class SKIPGPModel(gp.models.ExactGP):
     def __init__(self, train_x, train_y, grid_size=100):
-        likelihood = gp.likelihoods.GaussianLikelihood()
+        likelihood = gp.likelihoods.GaussianLikelihood(
+                      noise_constraint=gp.constraints.GreaterThan(1e-4))
         super().__init__(train_x, train_y, likelihood)
         self.mean_module = gp.means.ConstantMean()
         self.covar_module = gp.kernels.ProductStructureKernel(
@@ -91,9 +91,7 @@ def main(dataset: str = None, data_dir: str = None,
 
     set_seeds(seed)
 
-    ## Disable GPU for now.
-    # device = "cuda" if torch.cuda.is_available() else "cpu"
-    device = "cpu"
+    device = "cuda" if torch.cuda.is_available() else "cpu"
 
     train_dataset = UCIDataset.create(dataset, uci_data_dir=data_dir,
                                       mode="train", device=device)
@@ -106,7 +104,7 @@ def main(dataset: str = None, data_dir: str = None,
 
     print(f'"{dataset}": D = {train_x.size(-1)}, Train N = {train_x.size(0)}, Test N = {test_x.size(0)}')
 
-    wandb.init(tensorboard=True, config={
+    wandb.init(config={
       'dataset': dataset,
       'lr': lr,
       'lanc_iter': lanc_iter,
@@ -115,7 +113,6 @@ def main(dataset: str = None, data_dir: str = None,
       'N_train': train_x.size(0),
       'N_test': test_x.size(0),
     })
-    logger = SummaryWriter(log_dir=wandb.run.dir)
 
     model = SKIPGPModel(train_x, train_y).to(device)
     mll = gp.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
@@ -125,17 +122,17 @@ def main(dataset: str = None, data_dir: str = None,
     for i in tqdm(range(epochs)):
       train_dict = train(train_x, train_y, model, mll, optimizer,
                          lanc_iter=lanc_iter)
-      log_scalar_dict(train_dict, logger, global_step=i + 1)
+      wandb.log(train_dict, step=i + 1)
       
       if (i % log_int) == 0:
         test_dict = test(test_x, test_y, model, mll,
                          pre_size=pre_size, lanc_iter=lanc_iter)
-        log_scalar_dict(test_dict, logger, global_step=i + 1)
+        wandb.log(test_dict, step=i + 1)
 
     if (i % log_int) != 0:
       test_dict = test(test_x, test_y, model, mll,
                         pre_size=pre_size, lanc_iter=lanc_iter)
-      log_scalar_dict(test_dict, logger, global_step=i + 1)
+      wandb.log(test_dict, step=i + 1)
 
 
 if __name__ == "__main__":
