@@ -270,7 +270,7 @@ public:
 
         lattice.all_splat_ts = NANO_CAST(Clock::now() - start_ts).count();
 
-        std::cout << "Hash table filled " << lattice.hashTable.size() << std::endl;
+        // std::cout << "Hash table filled " << lattice.hashTable.size() << std::endl;
 
         // // Old code
         // float_type *col = new float_type[im.channels+1];

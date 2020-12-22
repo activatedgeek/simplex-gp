@@ -7,6 +7,7 @@ import itertools
 import os
 import random
 import numpy as np
+import wandb
 
 
 def set_seeds(seed=None):
@@ -15,11 +16,6 @@ def set_seeds(seed=None):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
-
-
-def log_scalar_dict(data, logger, global_step=None):
-    for k, v in data.items():
-        logger.add_scalar(k, v, global_step=global_step)
 
 
 def standardize(train_x, train_y, test_x, test_y):

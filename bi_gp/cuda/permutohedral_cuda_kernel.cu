@@ -531,12 +531,12 @@ public:
 
     Tensor res = slice(src, ref);
 
-    int* entries = hashTable.getEntries();
-    std::set<int> s;
-    for (size_t i = 0; i < (N * (pd + 1)); ++i) {
-      if (entries[i] >= 0) { s.insert(entries[i]); }
-    }
-    std::cout << "Hash table size: " << s.size() << std::endl;
+    // int* entries = hashTable.getEntries();
+    // std::set<int> s;
+    // for (size_t i = 0; i < (N * (pd + 1)); ++i) {
+    //   if (entries[i] >= 0) { s.insert(entries[i]); }
+    // }
+    // std::cout << "Hash table size: " << s.size() << std::endl;
 
     return res;
   }
