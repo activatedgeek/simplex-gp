@@ -13,126 +13,30 @@ import gpytorch
 #import multiprocessing as mp
 
 if torch.cuda.is_available():
-    lattice = load(name="gpu_lattice", verbose=True, sources=[
+    gpulattice = load(name="gpu_lattice", verbose=True, sources=[
                     os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda.cpp'),
-                    os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda_kernel.cu')])
-else:
-    lattice = load(name="lattice", verbose=True, sources=[
-                    os.path.join(os.path.dirname(__file__), 'lattice.cpp')])
-latticefilter = lattice.filter
+                    os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda_kernel.cu')]).filter
 
-class LatticeGaussian(nn.Module):
-    def __init__(self,ref):
-        super().__init__()
-        self.ref = ref
-
-    def __matmul__(self,U):
-        return self(U)
-    # def __rmatmul__(self,U):
-    #     return self(U)
-
-    def forward(self,U):
-        return LatticeFilter.apply(U,self.ref)# - U #usually substracts U: 0 along the diagonal.
-
-
-
-class BatchedAdjacency(nn.Module):
-    def __init__(self,num_threads=8):
-        super().__init__()
-        self.num_threads = num_threads
-    def forward(self, src_imgs,guide_imgs):
-        bs,L,h,w = src_imgs.shape
-        bs,d,h,w = guide_imgs.shape
-        flat_srcs = src_imgs.view(bs,L,-1).permute(0,2,1)
-        flat_refs = guide_imgs.view(bs,d,-1).permute(0,2,1)
-        filtered_imgs = BatchedLatticeFilter.apply(flat_srcs,flat_refs,\
-                                self.num_threads).permute(0,2,1).reshape(src_imgs.shape)
-        return filtered_imgs - src_imgs
-    # def forward(self,Us,refs):
-    #     with concurrent.futures.ProcessPoolExecutor(max_workers=self.num_threads) as executor:
-    #         filtered_mb = torch.stack(list(executor.map(lattice_filter_img,Us,refs)))
-    #     return filtered_mb - Us
-
-# def lattice_filter_img(src,ref):
-#         c,h,w = src.shape
-#         k,h,w = ref.shape
-#         flat_src = src.view(c,-1).t()
-#         flat_ref = ref.view(k,-1).t()
-#         return LatticeFilter.apply(flat_src,flat_ref).t().reshape(src.shape)
-
-# def batched_filter(flat_srcs,flat_refs,num_threads):
-#     with concurrent.futures.ThreadPoolExecutor(max_workers=num_threads) as executor:
-#         filtered_mb = torch.stack(list(executor.map(latticefilter,flat_srcs,flat_refs)))
-#     return filtered_mb
-
-def batched_filter(flat_srcs,flat_refs,num_threads):
-    print(f"numthreads: {num_threads}")
-    process_pool = mp.Pool(processes=num_threads)
-    filtered_srcs = process_pool.starmap(latticefilter,list(zip(flat_srcs,flat_refs)))
-    process_pool.close()
-    process_pool.join()
-    filtered_mb = torch.stack(filtered_srcs)
-    return filtered_mb
-
-class BatchedLatticeFilter(Function):
-    @staticmethod
-    def forward(ctx,flat_srcs,flat_refs,num_threads):
-        assert flat_srcs.shape[:2] == flat_refs.shape[:2], \
-            "Incompatible shapes {}, and {}".format(flat_srcs.shape,flat_refs.shape)
-        ctx.save_for_backward(flat_srcs,flat_refs)
-        ctx.num_threads = num_threads
-        filtered_mb = batched_filter(flat_srcs,flat_refs,num_threads)
-        return filtered_mb
-    @staticmethod
-    def backward(ctx,grad_output):
-        with torch.no_grad():
-            srcs, refs = ctx.saved_tensors
-            num_threads = ctx.num_threads
-            g = grad_output
-            n,L = srcs.shape[-2:]
-            d = refs.shape[-1]
-            bs = srcs.shape[0]
-            grad_source = grad_reference = None
-            if ctx.needs_input_grad[0] and not ctx.needs_input_grad[1]:
-                grad_source = batched_filter(g,refs,num_threads) # Matrix is symmetric
-            if ctx.needs_input_grad[1]: # try torch.no_grad ()
-                s = []
-                s.append(time.time())
-                gf = grad_and_ref = grad_output[...,None]*refs[...,None,:] # bs x n x L x d
-                grad_and_ref_flat = grad_and_ref.view(grad_and_ref.shape[:-2]+(L*d,))
-                sf = src_and_ref = srcs[...,None]*refs[...,None,:] # bs x n x L x d
-                src_and_ref_flat = src_and_ref.view(src_and_ref.shape[:-2]+(L*d,))
-                s.append(time.time())
-                #bs x n x (L+Ld+L+Ld):   bs x n x L       bs x n x Ld     bs x n x L   bs x n x Ld 
-                all_ = torch.cat([g,grad_and_ref_flat,srcs,src_and_ref_flat],dim=-1)
-                s.append(time.time())
-                filtered_all = batched_filter(all_,refs,num_threads)#ctx.W@all_#torch.randn_like(all_)#
-                s.append(time.time())
-                [wg,wgf,ws,wsf] = torch.split(filtered_all,[L,L*d,L,L*d],dim=-1)
-                s.append(time.time())
-                # has shape bs x n x d 
-                grad_reference = -2*(sf*wg[...,None] - srcs[...,None]*wgf.view(bs,n,L,d) + gf*ws[...,None] - g[...,None]*wsf.view(bs,n,L,d)).sum(-2) # sum over L dimension
-                if ctx.needs_input_grad[0]: grad_source = wg
-                s.append(time.time())
-                s = np.array(s)
-            #print(f"{s[1:]-s[:-1]}")
-        return grad_source, grad_reference, None # num_threads needs no grad
+cpulattice = load(name="lattice", verbose=True, sources=[
+                    os.path.join(os.path.dirname(__file__), 'lattice.cpp')]).filter
 
 class LatticeFilter(Function):
     @staticmethod
-    def forward(ctx, source, reference):
+    def forward(ctx, source, reference,gpu=False):
         #W = torch.exp(-((reference[None,:,:] - reference[:,None,:])**2).sum(-1)).double()
         #ctx.W = W
         # Typical runtime of O(nd^2 + n*L), Worst case O(nd^2 + n*L*d)
         assert source.shape[0] == reference.shape[0], \
             "Incompatible shapes {}, and {}".format(source.shape,reference.shape)
         ctx.save_for_backward(source,reference) # TODO: add batch compatibility
-        filtered_output = latticefilter(source,reference.contiguous(),int(1))
+        filtermethod = gpulattice if gpu else cpulattice
+        filtered_output = filtermethod(source,reference.contiguous(),int(1))
         return filtered_output
     @staticmethod
-    def backward(ctx,grad_output):
+    def backward(ctx,grad_output,gpu=False):
         # Typical runtime of O(nd^2 + 2L*n*d), Worst case  O(nd^2 + 2L*n*d^2)
         # Does not support second order autograd at the moment
+        filtermethod = gpulattice if gpu else cpulattice
         with torch.no_grad():
             src, ref = ctx.saved_tensors
             g = grad_output
@@ -140,7 +44,7 @@ class LatticeFilter(Function):
             d = ref.shape[-1]
             grad_source = grad_reference = None
             if ctx.needs_input_grad[0] and not ctx.needs_input_grad[1]:
-                grad_source = latticefilter(g,ref,1)#ctx.W@g#latticefilter(g,ref) # Matrix is symmetric
+                grad_source = filtermethod(g,ref,1)#ctx.W@g#latticefilter(g,ref) # Matrix is symmetric
             if ctx.needs_input_grad[1]: # try torch.no_grad ()
                 s = []
                 s.append(time.time())
@@ -152,7 +56,7 @@ class LatticeFilter(Function):
                 #n x (L+Ld+L+Ld):   n x L       n x Ld     n x L   n x Ld 
                 all_ = torch.cat([g,grad_and_ref_flat,src,src_and_ref_flat],dim=-1)
                 s.append(time.time())
-                filtered_all = latticefilter(all_,ref,1)#ctx.W@all_#torch.randn_like(all_)#
+                filtered_all = filtermethod(all_,ref,1)#ctx.W@all_#torch.randn_like(all_)#
                 s.append(time.time())
                 [wg,wgf,ws,wsf] = torch.split(filtered_all,[L,L*d,L,L*d],dim=-1)
                 s.append(time.time())
@@ -164,24 +68,56 @@ class LatticeFilter(Function):
             #print(f"{s[1:]-s[:-1]}")
         return grad_source, grad_reference
         
-
-
-
-# class LSHGaussian(nn.Module):
-#     def __init__(self,ref):
-#         super().__init__()
-#         self.ref = ref
-
-#     def __matmul__(self,U):
-#         return self(U)
-#     # def __rmatmul__(self,U):
-#     #     return self(U)
-
-#     def forward(self,U):
-#         return crf.lsh.filter(U,self.ref,5,5,30) - U
-
-#     def backward(self,*args,**kwargs):
-#         raise NotImplementedError
+class LatticeFilterGeneral(Function):
+    @staticmethod
+    def forward(ctx, source, reference,kernel_fn,gpu=False):
+        #W = torch.exp(-((reference[None,:,:] - reference[:,None,:])**2).sum(-1)).double()
+        #ctx.W = W
+        # Typical runtime of O(nd^2 + n*L), Worst case O(nd^2 + n*L*d)
+        assert source.shape[0] == reference.shape[0], \
+            "Incompatible shapes {}, and {}".format(source.shape,reference.shape)
+        ctx.save_for_backward(source,reference) # TODO: add batch compatibility
+        ctx.gpu=gpu
+        ctx.kernel_fn= kernel_fn
+        filtermethod = gpulattice if gpu else cpulattice
+        filtered_output = filtermethod(source,reference.contiguous(),kernel_fn.get_coeffs())
+        return filtered_output
+    @staticmethod
+    def backward(ctx,grad_output):
+        # Typical runtime of O(nd^2 + 2L*n*d), Worst case  O(nd^2 + 2L*n*d^2)
+        # Does not support second order autograd at the moment
+        
+        filtermethod = gpulattice if ctx.gpu else cpulattice
+        with torch.no_grad():
+            src, ref = ctx.saved_tensors
+            g = grad_output
+            n,L = src.shape[-2:]
+            d = ref.shape[-1]
+            grad_source = grad_reference = None
+            if ctx.needs_input_grad[0] and not ctx.needs_input_grad[1]:
+                grad_source = filtermethod(g,ref,ctx.kernel_fn.get_coeffs())#ctx.W@g#latticefilter(g,ref) # Matrix is symmetric
+            if ctx.needs_input_grad[1]: # try torch.no_grad ()
+                s = []
+                s.append(time.time())
+                gf = grad_and_ref = grad_output[...,None]*ref[...,None,:] # n x L x d
+                grad_and_ref_flat = grad_and_ref.view(grad_and_ref.shape[:-2]+(L*d,))
+                sf = src_and_ref = src[...,None]*ref[...,None,:] # n x L x d
+                src_and_ref_flat = src_and_ref.view(src_and_ref.shape[:-2]+(L*d,))
+                s.append(time.time())
+                #n x (L+Ld+L+Ld):   n x L       n x Ld     n x L   n x Ld 
+                all_ = torch.cat([g,grad_and_ref_flat,src,src_and_ref_flat],dim=-1)
+                s.append(time.time())
+                filtered_all = filtermethod(all_,ref,ctx.kernel_fn.get_deriv_coeffs())#ctx.W@all_#torch.randn_like(all_)#
+                s.append(time.time())
+                [wg,wgf,ws,wsf] = torch.split(filtered_all,[L,L*d,L,L*d],dim=-1)
+                s.append(time.time())
+                # has shape n x d 
+                grad_reference = -2*(sf*wg[...,None] - src[...,None]*wgf.view(-1,L,d) + gf*ws[...,None] - g[...,None]*wsf.view(-1,L,d)).sum(-2) # sum over L dimension
+                if ctx.needs_input_grad[0]: grad_source = wg
+                s.append(time.time())
+                s = np.array(s)
+            #print(f"{s[1:]-s[:-1]}")
+        return grad_source, grad_reference
 
 
 if __name__=="__main__":
