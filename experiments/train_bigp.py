@@ -7,7 +7,7 @@ from pathlib import Path
 from timeit import default_timer as timer
 
 from bi_gp.bilateral_kernel import BilateralKernel
-from utils import set_seeds, standardize, UCIDataset
+from utils import set_seeds, prepare_dataset
 
 
 class BilateralGPModel(gp.models.ExactGP):
@@ -53,7 +53,7 @@ def train(x, y, model, mll, optim, lanc_iter=100):
   }
 
 
-def test(x, y, model, mll, lanc_iter=100, pre_size=100):
+def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
   model.eval()
 
   with torch.no_grad(), \
@@ -71,33 +71,22 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100):
       rmse = (pred_y.mean - y).pow(2).mean(0).sqrt()
 
   return {
-    'test/rmse': rmse.item(),
-    'test/pred_ts': pred_ts
+    f'{label}/rmse': rmse.item(),
+    f'{label}/pred_ts': pred_ts
   }
 
 
-def main(dataset: str = None, data_dir: str = None,
-         epochs: int = 100, lr: int = 0.01, lanc_iter: int = 100, pre_size: int = 100,
-         log_int: int = 5, seed: int = None):
-    if data_dir is None and os.environ.get('DATADIR') is not None:
-        data_dir = Path(os.path.join(os.environ.get('DATADIR'), 'uci'))
-
-    assert dataset is not None, f'Select a dataset from "{data_dir}"'
-
+def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int = None,
+         epochs: int = 100, lr: int = 0.01, lanc_iter: int = 100, pre_size: int = 100):
     set_seeds(seed)
-
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
-    train_dataset = UCIDataset.create(dataset, uci_data_dir=data_dir,
-                                      mode="train", device=device)
-    test_dataset = UCIDataset.create(dataset, uci_data_dir=data_dir,
-                                     mode="test", device=device)
+    data_iter = prepare_dataset(dataset, uci_data_dir=data_dir, device=device)
+    _, train_x, train_y = next(data_iter)
+    _, val_x, val_y = next(data_iter)
+    _, test_x, test_y = next(data_iter)
 
-    train_x, train_y = train_dataset.x, train_dataset.y
-    test_x, test_y = test_dataset.x, test_dataset.y
-    train_x, train_y, test_x, test_y = standardize(train_x, train_y, test_x, test_y)
-
-    print(f'"{dataset}": D = {train_x.size(-1)}, Train N = {train_x.size(0)}, Test N = {test_x.size(0)}')
+    print(f'"{dataset}": D = {train_x.size(-1)}, Train N = {train_x.size(0)}, Val N = {val_x.size(0)} Test N = {test_x.size(0)}')
 
     wandb.init(config={
       'dataset': dataset,
@@ -120,6 +109,11 @@ def main(dataset: str = None, data_dir: str = None,
       wandb.log(train_dict, step=i + 1)
       
       if (i % log_int) == 0:
+        val_dict = test(val_x, val_y, model, mll,
+                        pre_size=pre_size, lanc_iter=lanc_iter,
+                        label='val')
+        wandb.log(val_dict, step=i + 1)
+
         test_dict = test(test_x, test_y, model, mll,
                          pre_size=pre_size, lanc_iter=lanc_iter)
         wandb.log(test_dict, step=i + 1)

@@ -18,20 +18,29 @@ def set_seeds(seed=None):
     torch.cuda.manual_seed_all(seed)
 
 
-def standardize(train_x, train_y, test_x, test_y):
-    x_mean = train_x.mean(0, keepdim=True)
-    x_std = train_x.std(0, keepdim=True) + 1e-6
+def prepare_dataset(dataset, uci_data_dir, device=None):
+    if uci_data_dir is None and os.environ.get('DATADIR') is not None:
+        uci_data_dir = Path(os.path.join(os.environ.get('DATADIR'), 'uci'))
 
-    y_mean = train_y.mean(0, keepdim=True)
-    y_std = train_y.std(0, keepdim=True) + 1e-6
+    assert dataset is not None, f'Select a dataset from "{uci_data_dir}"'
 
-    train_x = (train_x - x_mean) / x_std
-    train_y = (train_y - y_mean) / y_std
+    splits = {
+        m: UCIDataset.create(dataset,
+            uci_data_dir=uci_data_dir, mode=m, device=device)
+        for m in ["train", "val", "test"]
+    }
 
-    test_x = (test_x - x_mean) / x_std
-    test_y = (test_y - y_mean) / y_std    
+    x_mean = splits.get('train').x.mean(0, keepdim=True)
+    x_std = splits.get('train').x.std(0, keepdim=True) + 1e-6
 
-    return train_x, train_y, test_x, test_y
+    y_mean = splits.get('train').y.mean(0, keepdim=True)
+    y_std = splits.get('train').y.std(0, keepdim=True) + 1e-6
+
+    for m in ["train", "val", "test"]:
+        x = (splits.get(m).x - x_mean) / (x_std + 1e-6)
+        y = (splits.get(m).y - y_mean) / (y_std + 1e-6)
+
+        yield m, x, y
 
 
 class UCIDataset(Dataset):

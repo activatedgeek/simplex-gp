@@ -3,14 +3,10 @@ method: grid
 parameters:
   dataset:
     values:
-      # - 3droad
       - elevators
       - houseelectric
       - keggdirected
-      - kin40k_all
       - precipitation3d_all
-      - protein
-      - pumadyn32nm_all
   epochs:
     value: 100
   lr:
@@ -19,6 +15,8 @@ parameters:
     value: 100
   pre_size:
     value: 20
+  grid_size:
+    value: 100
 program: experiments/train_skip.py
 command:
   - ${env}
