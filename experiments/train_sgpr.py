@@ -64,15 +64,16 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
        gp.settings.fast_pred_var():
       t_start = timer()
     
-      preds = model(x)
-      pred_y = model.likelihood(model(x))
-
+      # pred_y = model.likelihood(model(x))
+      pred_y = model(x)
       pred_ts = timer() - t_start
 
       rmse = (pred_y.mean - y).pow(2).mean(0).sqrt()
+      mae = (pred_y.mean - y).abs().mean(0)
 
   return {
     f'{label}/rmse': rmse.item(),
+    f'{label}/mae': mae.item(),
     f'{label}/pred_ts': pred_ts
   }
 
