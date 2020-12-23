@@ -95,13 +95,16 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
     print(f'"{dataset}": D = {train_x.size(-1)}, Train N = {train_x.size(0)}, Val N = {val_x.size(0)} Test N = {test_x.size(0)}')
 
     wandb.init(config={
+      'method': 'SKIP',
       'dataset': dataset,
       'lr': lr,
       'lanc_iter': lanc_iter,
       'pre_size': pre_size,
+      'grid_size': grid_size,
       'D': train_x.size(-1),
       'N_train': train_x.size(0),
       'N_test': test_x.size(0),
+      'N_val': val_x.size(0),
     })
 
     model = SKIPGPModel(train_x, train_y, grid_size=grid_size).to(device)
@@ -124,10 +127,14 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
                          pre_size=pre_size, lanc_iter=lanc_iter)
         wandb.log(test_dict, step=i + 1)
 
+        torch.save(model.state_dict(), Path(wandb.run.dir) / 'model.pt')
+
     if (i % log_int) != 0:
       test_dict = test(test_x, test_y, model, mll,
                         pre_size=pre_size, lanc_iter=lanc_iter)
       wandb.log(test_dict, step=i + 1)
+
+    torch.save(model.state_dict(), Path(wandb.run.dir) / 'model.pt')
 
 
 if __name__ == "__main__":

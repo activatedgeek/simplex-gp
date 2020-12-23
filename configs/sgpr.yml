@@ -10,7 +10,7 @@ parameters:
   epochs:
     value: 100
   lr:
-    value: 0.05
+    value: 0.01
   lanc_iter:
     value: 100
   pre_size:
