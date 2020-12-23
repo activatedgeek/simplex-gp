@@ -1,21 +1,21 @@
-name: bgp
+name: bilateral-gp
 channels:
   - conda-forge
 dependencies:
   - ninja
-  - python=3.7
+  - python
   - pip
   - pip:
     - jupyterlab
     - ipywidgets
-    - numpy
-    - scipy
-    - scikit-learn
-    - altair
-    - seaborn
     - tqdm
     - fire
-    - tensorboard
-    - 'torch -f https://download.pytorch.org/whl/cu102/torch_stable.html'
+    - seaborn
+    - altair
+    - numpy
+    - scipy
+    - pandas
+    - torch
+    - scikit-learn
     - gpytorch
     - wandb
