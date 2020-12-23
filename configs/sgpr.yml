@@ -1,0 +1,25 @@
+# method: random
+method: grid
+parameters:
+  dataset:
+    values:
+      - elevators
+      - houseelectric
+      - keggdirected
+      - precipitation3d_all
+  epochs:
+    value: 100
+  lr:
+    value: 0.05
+  lanc_iter:
+    value: 100
+  pre_size:
+    value: 20
+  n_inducing:
+    value: 500
+program: experiments/train_sgpr.py
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args}
