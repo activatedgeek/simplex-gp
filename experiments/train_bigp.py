@@ -77,10 +77,10 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
   }
 
 
-def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int = None,
-         epochs: int = 100, lr: int = 0.01, lanc_iter: int = 100, pre_size: int = 100):
+def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int = None, device: int = 0,
+         epochs: int = 100, lr: int = 1e-3, lanc_iter: int = 100, pre_size: int = 10):
     set_seeds(seed)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    device = f"cuda:{device}" if (device >= 0 and torch.cuda.is_available()) else "cpu"
 
     data_iter = prepare_dataset(dataset, uci_data_dir=data_dir, device=device)
     _, train_x, train_y = next(data_iter)

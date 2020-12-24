@@ -10,11 +10,11 @@ parameters:
   epochs:
     value: 100
   lr:
-    value: 0.05
+    value: 0.001
   lanc_iter:
     value: 100
   pre_size:
-    value: 20
+    value: 10
   grid_size:
     value: 100
 program: experiments/train_skip.py
@@ -22,4 +22,5 @@ command:
   - ${env}
   - ${interpreter}
   - ${program}
+  - --device=-1
   - ${args}
