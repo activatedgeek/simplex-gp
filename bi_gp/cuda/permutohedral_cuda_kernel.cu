@@ -3,6 +3,7 @@
 #include <cstdio>
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <c10/cuda/CUDACachingAllocator.h>
 #include <torch/extension.h>
 #include <THC/THCAtomics.cuh>
 
@@ -113,28 +114,28 @@ public:
 
   __host__ __forceinline__ __device__ int* getEntries() { return entry2nid; }
 
-  __device__ __forceinline__ int16_t* getKey(size_t h) {
+  __host__ __device__ __forceinline__ int16_t* getKey(const size_t h) {
     if (entry2nid[h] == -1) {
       return nullptr;
     }
     return &keys[entry2nid[h] * pd];
   }
 
-  __device__ __forceinline__ scalar_t* getValue(size_t h) {
+  __host__  __device__ __forceinline__ scalar_t* getValue(const size_t h) {
     if (entry2nid[h] == -1) {
       return nullptr;
     }
     return &values[entry2nid[h] * vd];
   }
 
-  __device__ __forceinline__ scalar_t* getBufferValue(size_t h) {
+  __device__ __forceinline__ scalar_t* getBufferValue(const size_t h) {
     if (entry2nid[h] == -1) {
       return nullptr;
     }
     return &bufferValues[entry2nid[h] * vd];
   }
 
-  __device__ __forceinline__ size_t modhash(int16_t* key) {
+  __device__ __forceinline__ size_t modhash(const int16_t* key) {
     size_t k = 0;
     for (uint16_t i = 0; i < pd; ++i) {
       k += static_cast<size_t>(key[i]);
@@ -143,7 +144,7 @@ public:
     return k % capacity;
   }
 
-  __device__ size_t insert(int16_t* key, int nid) {
+  __device__ size_t insert(const int16_t* key, const int nid) {
     size_t h = modhash(key);
 
     while (true) {
@@ -176,7 +177,7 @@ public:
     }
   }
 
-  __device__ int get(int16_t* key) {
+  __device__ int get(const int16_t* key) {
     size_t h = modhash(key);
 
     while (true) {
@@ -346,15 +347,16 @@ __global__ void blur_kernel(
     const size_t ax,
     const size_t order,
     int16_t* neighbors,
-    const scalar_t* zero) {
+    const scalar_t* zero,
+    const size_t M,
+    const size_t* blurEntries) {
   const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
-  if (n >= table.N) {
+  if (n >= M) {
     return;
   }
-  const size_t r = blockIdx.y;
   const size_t pd = table.pd;
   const size_t vd = table.vd;
-  const size_t nid = n * (pd + 1) + r;
+  const size_t nid = blurEntries[n];
 
   int16_t* neighbor = &neighbors[nid * (pd + 1)];
   const int16_t* key = table.getKey(nid);
@@ -366,7 +368,6 @@ __global__ void blur_kernel(
     }
     neighbor[ax] = key[ax] + o * pd;
 
-    // FIXME: This is always -1, causing all output to be always zero!!!
     int h = table.get(neighbor);
     const scalar_t* val = h >= 0 ? table.getValue(h) : zero;
     scalar_t c = get_binom_coef<scalar_t>(order, o);
@@ -472,19 +473,37 @@ public:
     gpuErrchk(cudaPeekAtLastError());
 
     gpuErrchk(cudaFree(_matK));
-
-    gpuErrchk(cudaDeviceSynchronize());
-    // int* entries = hashTable.getEntries();
-    // std::set<int> s;
-    // for (size_t i = 0; i < (N * (pd + 1)); ++i) {
-    //   s.insert(entries[replay[i].entry]);
-    // }
-    // std::cout << "Hash table size: " << s.size() << std::endl;
   }
 
-  void blur(size_t ax) {
+  std::vector<size_t> compute_blur_list() {
+    std::vector<size_t> entryArr;
+
+    std::set<int> s;
+    auto entries = hashTable.getEntries();
+    for (size_t i = 0; i < (N * (pd + 1)); ++i) {
+      auto ins = s.insert(entries[replay[i].entry]);
+      if (ins.second) {
+        entryArr.push_back(replay[i].entry);
+      }
+    }
+
+    return entryArr;
+  }
+
+  void blur() {
+    // Pre-compute all hash table entries for blur. 
+    auto entryArr = compute_blur_list();
+    const auto M = entryArr.size();
+    // std::cout << "Hash table size: " << M << std::endl;
+
+    size_t* _blurEntries;
+    gpuErrchk(cudaMallocManaged(&_blurEntries, M * sizeof(size_t)));
+    for (size_t i = 0; i < M; ++i) {
+      _blurEntries[i] = entryArr[i];
+    }
+
     int16_t* _matNeK;
-    gpuErrchk(cudaMallocManaged(&_matNeK, N * (pd + 1) * sizeof(int16_t)));
+    gpuErrchk(cudaMallocManaged(&_matNeK, M * (pd + 1) * sizeof(int16_t)));
 
     scalar_t* zero;
     gpuErrchk(cudaMallocManaged(&zero, vd * sizeof(scalar_t)));
@@ -493,18 +512,22 @@ public:
     }
 
     const dim3 threads(BLOCK_SIZE);
-    const dim3 blocks((N + threads.x - 1) / threads.x, pd + 1);
+    const dim3 blocks((M + threads.x - 1) / threads.x);
 
-    blur_kernel<scalar_t><<<blocks, threads>>>(
-      hashTable, ax, order,
-      _matNeK, zero);
-    gpuErrchk(cudaPeekAtLastError());
+    for (size_t ax = 0; ax <= pd; ++ax) {
+      blur_kernel<scalar_t><<<blocks, threads>>>(
+        hashTable, ax, order,
+        _matNeK, zero, M, _blurEntries);
+      gpuErrchk(cudaPeekAtLastError());
+      
+      /** FIXME: Swap results in zeros. **/
+      // gpuErrchk(cudaDeviceSynchronize());
+      // hashTable.swapValues();
+    }
 
+    gpuErrchk(cudaFree(_blurEntries));
     gpuErrchk(cudaFree(zero));
     gpuErrchk(cudaFree(_matNeK));
-
-    gpuErrchk(cudaDeviceSynchronize());
-    hashTable.swapValues();
   }
 
   Tensor slice(Tensor src, Tensor ref) {
@@ -525,9 +548,9 @@ public:
   Tensor filter(Tensor src, Tensor ref) {
     splat(src, ref);
 
-    for (size_t ax = 0; ax <= pd; ++ax) {
-      blur(ax);
-    }
+    c10::cuda::CUDACachingAllocator::emptyCache();
+
+    blur();
 
     return slice(src, ref);
   }

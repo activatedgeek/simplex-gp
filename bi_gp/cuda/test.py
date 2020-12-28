@@ -6,7 +6,7 @@ from timeit import default_timer as timer
 
 
 def test_cpu(root, src, ref):
-  cpu_lattice = load(name="lattice",
+  cpu_lattice = load(name="cpu_lattice",
                      verbose=True,
                      sources=[(root / '..' / 'lattice.cpp')])
   
