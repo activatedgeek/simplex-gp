@@ -8,9 +8,9 @@ parameters:
       - keggdirected
       - precipitation3d_all
   epochs:
-    value: 100
+    value: 200
   lr:
-    value: 0.001
+    value: 0.01
   lanc_iter:
     value: 100
   pre_size:

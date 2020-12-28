@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <cmath>
 #include <cstdio>
 #include <cuda.h>
@@ -61,7 +62,7 @@ class HashTableGPU {
 private:
   int16_t* keys;
   scalar_t* values;
-  scalar_t* newValues;
+  scalar_t* bufferValues;
 
   /**
    * Each point has at most (pd + 1) neighbors.
@@ -78,13 +79,10 @@ public:
     gpuErrchk(cudaMallocManaged(&keys, capacity * pd * sizeof(int16_t)));
 
     gpuErrchk(cudaMallocManaged(&values, capacity * vd * sizeof(scalar_t)));
+    gpuErrchk(cudaMallocManaged(&bufferValues, capacity * vd * sizeof(scalar_t)));
     for (size_t i = 0; i < capacity * vd; ++i) {
       values[i] = static_cast<scalar_t>(0.0);
-    }
-
-    gpuErrchk(cudaMallocManaged(&newValues, capacity * vd * sizeof(scalar_t)));
-    for (size_t i = 0; i < capacity * vd; ++i) {
-      newValues[i] = static_cast<scalar_t>(0.0);
+      bufferValues[i] = static_cast<scalar_t>(0.0);
     }
 
     gpuErrchk(cudaMallocManaged(&entry2nid, capacity * sizeof(int)));
@@ -95,10 +93,10 @@ public:
 
   void swapValues() {
     scalar_t* tmp = values;
-    values = newValues;
-    newValues = tmp;
+    values = bufferValues;
+    bufferValues = tmp;
     for (size_t i = 0; i < capacity * vd; ++i) {
-      newValues[i] = static_cast<scalar_t>(0.0);
+      bufferValues[i] = static_cast<scalar_t>(0.0);
     }
   }
 
@@ -109,31 +107,31 @@ public:
   void free() {
     gpuErrchk(cudaFree(keys));
     gpuErrchk(cudaFree(values));
-    gpuErrchk(cudaFree(newValues));
+    gpuErrchk(cudaFree(bufferValues));
     gpuErrchk(cudaFree(entry2nid));
   }
 
   __host__ __forceinline__ __device__ int* getEntries() { return entry2nid; }
 
-  __device__ __forceinline__ int16_t* lookupKey(size_t h) {
+  __device__ __forceinline__ int16_t* getKey(size_t h) {
     if (entry2nid[h] == -1) {
       return nullptr;
     }
     return &keys[entry2nid[h] * pd];
   }
 
-  __device__ __forceinline__ scalar_t* lookupValue(size_t h) {
+  __device__ __forceinline__ scalar_t* getValue(size_t h) {
     if (entry2nid[h] == -1) {
       return nullptr;
     }
     return &values[entry2nid[h] * vd];
   }
 
-  __device__ __forceinline__ scalar_t* lookupNewValue(size_t h) {
+  __device__ __forceinline__ scalar_t* getBufferValue(size_t h) {
     if (entry2nid[h] == -1) {
       return nullptr;
     }
-    return &newValues[entry2nid[h] * vd];
+    return &bufferValues[entry2nid[h] * vd];
   }
 
   __device__ __forceinline__ size_t modhash(int16_t* key) {
@@ -292,8 +290,7 @@ __global__ void splat_kernel(
       key[i] = y[i] + canonical[r * (pd + 1) + rank[i]];
     }
 
-    size_t h = table.insert(key, nid);
-    replay[nid].entry = h;
+    replay[nid].entry = table.insert(key, nid);
     replay[nid].weight = bary[r];
   }
 }
@@ -308,8 +305,7 @@ __global__ void process_hashtable_kernel(
   }
   const size_t r = blockIdx.y;
   const size_t pd = table.pd;
-
-  const size_t id = n * (pd + 1) + r;
+  const size_t nid = n * (pd + 1) + r;
 
   /**
    * NOTE: Hash table may have duplicate entries because
@@ -317,8 +313,8 @@ __global__ void process_hashtable_kernel(
    * the first key match to correct this.
    **/
   int* entries = table.getEntries();
-  if (entries[id] >= 0) {
-    entries[id] = entries[table.get(table.lookupKey(id))];
+  if (entries[nid] >= 0) {
+    entries[nid] = entries[table.get(table.getKey(nid))];
   }
 }
 
@@ -338,7 +334,7 @@ __global__ void splat_value_kernel(
   const size_t nid = n * (pd + 1) + r;
   auto value = src[n];
 
-  scalar_t* val = table.lookupValue(replay[nid].entry);
+  scalar_t* val = table.getValue(replay[nid].entry);
   for (size_t i = 0; i < vd; ++i) {
     gpuAtomicAdd(&val[i], replay[nid].weight * value[i]);
   }
@@ -347,7 +343,7 @@ __global__ void splat_value_kernel(
 template <typename scalar_t>
 __global__ void blur_kernel(
     HashTableGPU<scalar_t> table,
-    const size_t d,
+    const size_t ax,
     const size_t order,
     int16_t* neighbors,
     const scalar_t* zero) {
@@ -358,28 +354,24 @@ __global__ void blur_kernel(
   const size_t r = blockIdx.y;
   const size_t pd = table.pd;
   const size_t vd = table.vd;
+  const size_t nid = n * (pd + 1) + r;
 
-  const size_t id = n * (pd + 1) + r;
-  int16_t* neighbor = &neighbors[id * (pd + 1)];
-
-  const int16_t* key = table.lookupKey(id);
-  if (!key) {
-    return;
-  }
-
-  scalar_t* newVal = table.lookupNewValue(id);
+  int16_t* neighbor = &neighbors[nid * (pd + 1)];
+  const int16_t* key = table.getKey(nid);
+  scalar_t* bufferVal = table.getBufferValue(nid);
 
   for (int16_t o = -order; o <= order; ++o) {
     for (size_t p = 0; p < pd; ++p) {
       neighbor[p] = key[p] - o;
     }
-    neighbor[d] = key[d] + o * pd;
+    neighbor[ax] = key[ax] + o * pd;
 
+    // FIXME: This is always -1, causing all output to be always zero!!!
     int h = table.get(neighbor);
-    const scalar_t* val = h >= 0 ? table.lookupValue(h) : zero;
+    const scalar_t* val = h >= 0 ? table.getValue(h) : zero;
     scalar_t c = get_binom_coef<scalar_t>(order, o);
     for (size_t v = 0; v < vd; ++v) {
-      gpuAtomicAdd(&newVal[v], c * val[v]);
+      gpuAtomicAdd(&bufferVal[v], c * val[v]);
     }
   }
 }
@@ -402,7 +394,7 @@ __global__ void slice_kernel(
 
   for (size_t r = 0; r <= pd; ++r) {
     size_t nid = n * (pd + 1) + r;
-    scalar_t* val = table.lookupValue(replay[nid].entry);
+    scalar_t* val = table.getValue(replay[nid].entry);
     for (size_t j = 0; j < vd; ++j) {
       out[j] += (replay[nid].weight * val[j]) / scale;
     }
@@ -480,9 +472,17 @@ public:
     gpuErrchk(cudaPeekAtLastError());
 
     gpuErrchk(cudaFree(_matK));
+
+    gpuErrchk(cudaDeviceSynchronize());
+    // int* entries = hashTable.getEntries();
+    // std::set<int> s;
+    // for (size_t i = 0; i < (N * (pd + 1)); ++i) {
+    //   s.insert(entries[replay[i].entry]);
+    // }
+    // std::cout << "Hash table size: " << s.size() << std::endl;
   }
 
-  void blur(size_t d) {
+  void blur(size_t ax) {
     int16_t* _matNeK;
     gpuErrchk(cudaMallocManaged(&_matNeK, N * (pd + 1) * sizeof(int16_t)));
 
@@ -496,13 +496,14 @@ public:
     const dim3 blocks((N + threads.x - 1) / threads.x, pd + 1);
 
     blur_kernel<scalar_t><<<blocks, threads>>>(
-      hashTable, d, order,
+      hashTable, ax, order,
       _matNeK, zero);
     gpuErrchk(cudaPeekAtLastError());
 
     gpuErrchk(cudaFree(zero));
     gpuErrchk(cudaFree(_matNeK));
 
+    gpuErrchk(cudaDeviceSynchronize());
     hashTable.swapValues();
   }
 
@@ -518,27 +519,17 @@ public:
     gpuErrchk(cudaPeekAtLastError());
 
     gpuErrchk(cudaDeviceSynchronize());
-
     return res;
   }
 
   Tensor filter(Tensor src, Tensor ref) {
     splat(src, ref);
 
-    for (size_t d = 0; d <= pd; ++d) {
-      blur(d);
+    for (size_t ax = 0; ax <= pd; ++ax) {
+      blur(ax);
     }
 
-    Tensor res = slice(src, ref);
-
-    // int* entries = hashTable.getEntries();
-    // std::set<int> s;
-    // for (size_t i = 0; i < (N * (pd + 1)); ++i) {
-    //   if (entries[i] >= 0) { s.insert(entries[i]); }
-    // }
-    // std::cout << "Hash table size: " << s.size() << std::endl;
-
-    return res;
+    return slice(src, ref);
   }
 };
 

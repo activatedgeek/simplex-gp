@@ -7,12 +7,13 @@ from timeit import default_timer as timer
 
 def test_cpu(root, src, ref):
   cpu_lattice = load(name="lattice",
-                    #  verbose=True,
+                     verbose=True,
                      sources=[(root / '..' / 'lattice.cpp')])
   
   start = timer()
 
   res = cpu_lattice.filter(src, ref, 1)
+  print(res)
 
   # print(f'CPU finished in: {(timer() - start):.6f}s')
 
@@ -28,7 +29,7 @@ def test_gpu(root, src, ref):
   ref = ref.to(device)
 
   gpu_lattice = load(name="gpu_lattice",
-                    #  verbose=True,
+                     verbose=True,
                      sources=[
                        (root / 'permutohedral_cuda.cpp'),
                        (root / 'permutohedral_cuda_kernel.cu')
@@ -37,7 +38,8 @@ def test_gpu(root, src, ref):
   start = timer()
 
   res = gpu_lattice.filter(src, ref, 1)
-
+  print(res)
+  
   # print(f'GPU finished in: {(timer() - start):.6f}s')
 
   return res
@@ -51,6 +53,6 @@ if __name__ == "__main__":
     src = (ref**2).cos()
 
   print(f'N: {ref.size(0)}, pD: {ref.size(1)}')
-  print(test_cpu(root, src, ref))
+  test_cpu(root, src, ref)
   print('-------------------------------')
-  print(test_gpu(root, src, ref))
+  test_gpu(root, src, ref)
