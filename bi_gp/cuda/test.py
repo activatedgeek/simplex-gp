@@ -13,9 +13,8 @@ def test_cpu(root, src, ref):
   start = timer()
 
   res = cpu_lattice.filter(src, ref, 1)
-  print(res)
 
-  # print(f'CPU finished in: {(timer() - start):.6f}s')
+  print(f'CPU finished in: {(timer() - start):.6f}s')
 
   return res
 
@@ -38,9 +37,8 @@ def test_gpu(root, src, ref):
   start = timer()
 
   res = gpu_lattice.filter(src, ref, 1)
-  print(res)
   
-  # print(f'GPU finished in: {(timer() - start):.6f}s')
+  print(f'GPU finished in: {(timer() - start):.6f}s')
 
   return res
 
@@ -53,6 +51,17 @@ if __name__ == "__main__":
     src = (ref**2).cos()
 
   print(f'N: {ref.size(0)}, pD: {ref.size(1)}')
-  test_cpu(root, src, ref)
+
+  res_cpu = test_cpu(root, src, ref)
+
   print('-------------------------------')
-  test_gpu(root, src, ref)
+
+  res_gpu = test_gpu(root, src, ref).cpu()
+
+  try:
+    assert torch.allclose(res_cpu, res_gpu), 'CPU/GPU mismatch.'
+  except AssertionError:
+    print(f'Error norm: {(res_cpu - res_gpu).norm(p=2).item():.6f} (this may be small enough to be ok!)')
+    raise
+
+  print('Matched!')

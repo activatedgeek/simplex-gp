@@ -92,15 +92,6 @@ public:
     }
   }
 
-  void swapValues() {
-    scalar_t* tmp = values;
-    values = bufferValues;
-    bufferValues = tmp;
-    for (size_t i = 0; i < capacity * vd; ++i) {
-      bufferValues[i] = static_cast<scalar_t>(0.0);
-    }
-  }
-
   /**
    * NOTE: Copy constructor in kernel arguments triggers the destructor.
    * Instead, manually free this in the PermutohedralLatticeGPU class.
@@ -114,14 +105,14 @@ public:
 
   __host__ __forceinline__ __device__ int* getEntries() { return entry2nid; }
 
-  __host__ __device__ __forceinline__ int16_t* getKey(const size_t h) {
+  __device__ __forceinline__ int16_t* getKey(const size_t h) {
     if (entry2nid[h] == -1) {
       return nullptr;
     }
     return &keys[entry2nid[h] * pd];
   }
 
-  __host__  __device__ __forceinline__ scalar_t* getValue(const size_t h) {
+  __device__ __forceinline__ scalar_t* getValue(const size_t h) {
     if (entry2nid[h] == -1) {
       return nullptr;
     }
@@ -133,6 +124,15 @@ public:
       return nullptr;
     }
     return &bufferValues[entry2nid[h] * vd];
+  }
+
+  __host__ __device__ void swapBuffer() {
+    scalar_t* tmp = values;
+    values = bufferValues;
+    bufferValues = tmp;
+    for (size_t i = 0; i < capacity * vd; ++i) {
+      bufferValues[i] = static_cast<scalar_t>(0.0);
+    }
   }
 
   __device__ __forceinline__ size_t modhash(const int16_t* key) {
@@ -362,7 +362,7 @@ __global__ void blur_kernel(
   const int16_t* key = table.getKey(nid);
   scalar_t* bufferVal = table.getBufferValue(nid);
 
-  for (int16_t o = -order; o <= order; ++o) {
+  for (int16_t o = -static_cast<int16_t>(order); o <= static_cast<int16_t>(order); ++o) {
     for (size_t p = 0; p < pd; ++p) {
       neighbor[p] = key[p] - o;
     }
@@ -375,6 +375,11 @@ __global__ void blur_kernel(
       gpuAtomicAdd(&bufferVal[v], c * val[v]);
     }
   }
+}
+
+template <typename scalar_t>
+__global__ void buffer_swap_kernel(HashTableGPU<scalar_t> table) {
+  table.swapBuffer();
 }
 
 template <typename scalar_t>
@@ -475,6 +480,7 @@ public:
     gpuErrchk(cudaFree(_matK));
   }
 
+  /** FIXME: This needs to be moved to CUDA. Super slow for large hash tables. **/
   std::vector<size_t> compute_blur_list() {
     std::vector<size_t> entryArr;
 
@@ -519,10 +525,13 @@ public:
         hashTable, ax, order,
         _matNeK, zero, M, _blurEntries);
       gpuErrchk(cudaPeekAtLastError());
-      
-      /** FIXME: Swap results in zeros. **/
-      // gpuErrchk(cudaDeviceSynchronize());
-      // hashTable.swapValues();
+
+      /** FIXME: CUDA swap kernel leads to wrong results. why? **/
+      // buffer_swap_kernel<scalar_t><<<1,1>>>(hashTable);
+      // gpuErrchk(cudaPeekAtLastError());
+
+      gpuErrchk(cudaDeviceSynchronize());
+      hashTable.swapBuffer();
     }
 
     gpuErrchk(cudaFree(_blurEntries));
