@@ -72,6 +72,7 @@ private:
   int* entry2nid;
 public:
   size_t N, pd, vd, capacity;
+  int64_t* M; // for actual size after splat.
 
   HashTableGPU(size_t pd_, size_t vd_, size_t N_): 
     pd(pd_), vd(vd_), N(N_) {
@@ -90,6 +91,9 @@ public:
     for (size_t i = 0; i < capacity; ++i) {
       entry2nid[i] = static_cast<int>(-1);
     }
+
+    gpuErrchk(cudaMallocManaged(&M, sizeof(int64_t)));
+    *M = static_cast<int64_t>(0);
   }
 
   /**
@@ -315,7 +319,14 @@ __global__ void process_hashtable_kernel(
    **/
   int* entries = table.getEntries();
   if (entries[nid] >= 0) {
-    entries[nid] = entries[table.get(table.getKey(nid))];
+    auto h = table.get(table.getKey(nid));
+
+    // Every element not re-assigned is unique.
+    if (entries[nid] == entries[h]) {
+      gpuAtomicAdd(table.M, static_cast<int64_t>(1));
+    }
+
+    entries[nid] = entries[h];
   }
 }
 
@@ -348,10 +359,9 @@ __global__ void blur_kernel(
     const size_t order,
     int16_t* neighbors,
     const scalar_t* zero,
-    const size_t M,
     const size_t* blurEntries) {
   const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
-  if (n >= M) {
+  if (n >= *table.M) {
     return;
   }
   const size_t pd = table.pd;
@@ -500,7 +510,7 @@ public:
     // Pre-compute all hash table entries for blur. 
     auto entryArr = compute_blur_list();
     const auto M = entryArr.size();
-    // std::cout << "Hash table size: " << M << std::endl;
+    // std::cout << "Hash table size: " << *hashTable.M << std::endl;
 
     size_t* _blurEntries;
     gpuErrchk(cudaMallocManaged(&_blurEntries, M * sizeof(size_t)));
@@ -523,7 +533,7 @@ public:
     for (size_t ax = 0; ax <= pd; ++ax) {
       blur_kernel<scalar_t><<<blocks, threads>>>(
         hashTable, ax, order,
-        _matNeK, zero, M, _blurEntries);
+        _matNeK, zero, _blurEntries);
       gpuErrchk(cudaPeekAtLastError());
 
       /** FIXME: CUDA swap kernel leads to wrong results. why? **/

@@ -61,7 +61,14 @@ if __name__ == "__main__":
   try:
     assert torch.allclose(res_cpu, res_gpu), 'CPU/GPU mismatch.'
   except AssertionError:
-    print(f'Error norm: {(res_cpu - res_gpu).norm(p=2).item():.6f} (this may be small enough to be ok!)')
+    rel_err = (res_cpu - res_gpu).norm(p=2) / res_cpu.norm(p=2)
+    print(f'Relative error: {rel_err:.6f} (this may be small enough to be ok!)')
+    
+    print('CPU:')
+    print(res_cpu)
+    print('GPU:')
+    print(res_gpu)
+
     raise
 
   print('Matched!')
