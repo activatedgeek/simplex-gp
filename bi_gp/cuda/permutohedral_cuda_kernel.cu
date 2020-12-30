@@ -1,14 +1,18 @@
+#include <assert.h>
 #include <cmath>
 #include <cstdio>
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <c10/cuda/CUDACachingAllocator.h>
 #include <torch/extension.h>
 #include <THC/THCAtomics.cuh>
 
 using at::Tensor;
-// typedef std::chrono::high_resolution_clock Clock;
+typedef std::chrono::high_resolution_clock Clock;
 
-// #define NANO_CAST(d) std::chrono::duration_cast<std::chrono::nanoseconds>(d)
+// #define DEBUG
+
+#define NANO_CAST(d) std::chrono::duration_cast<std::chrono::nanoseconds>(d)
 #define BLOCK_SIZE 1024
 #define PTAccessor2D(T) at::PackedTensorAccessor32<T,2,at::RestrictPtrTraits>
 #define Accessor1Di(T) at::TensorAccessor<T,1,at::RestrictPtrTraits,int32_t>
@@ -61,7 +65,7 @@ class HashTableGPU {
 private:
   int16_t* keys;
   scalar_t* values;
-  scalar_t* newValues;
+  scalar_t* bufferValues;
 
   /**
    * Each point has at most (pd + 1) neighbors.
@@ -70,6 +74,7 @@ private:
   int* entry2nid;
 public:
   size_t N, pd, vd, capacity;
+  int64_t* M; // for actual size after splat.
 
   HashTableGPU(size_t pd_, size_t vd_, size_t N_): 
     pd(pd_), vd(vd_), N(N_) {
@@ -78,28 +83,19 @@ public:
     gpuErrchk(cudaMallocManaged(&keys, capacity * pd * sizeof(int16_t)));
 
     gpuErrchk(cudaMallocManaged(&values, capacity * vd * sizeof(scalar_t)));
+    gpuErrchk(cudaMallocManaged(&bufferValues, capacity * vd * sizeof(scalar_t)));
     for (size_t i = 0; i < capacity * vd; ++i) {
       values[i] = static_cast<scalar_t>(0.0);
-    }
-
-    gpuErrchk(cudaMallocManaged(&newValues, capacity * vd * sizeof(scalar_t)));
-    for (size_t i = 0; i < capacity * vd; ++i) {
-      newValues[i] = static_cast<scalar_t>(0.0);
+      bufferValues[i] = static_cast<scalar_t>(0.0);
     }
 
     gpuErrchk(cudaMallocManaged(&entry2nid, capacity * sizeof(int)));
     for (size_t i = 0; i < capacity; ++i) {
       entry2nid[i] = static_cast<int>(-1);
     }
-  }
 
-  void swapValues() {
-    scalar_t* tmp = values;
-    values = newValues;
-    newValues = tmp;
-    for (size_t i = 0; i < capacity * vd; ++i) {
-      newValues[i] = static_cast<scalar_t>(0.0);
-    }
+    gpuErrchk(cudaMallocManaged(&M, sizeof(int64_t)));
+    *M = static_cast<int64_t>(0);
   }
 
   /**
@@ -109,34 +105,43 @@ public:
   void free() {
     gpuErrchk(cudaFree(keys));
     gpuErrchk(cudaFree(values));
-    gpuErrchk(cudaFree(newValues));
+    gpuErrchk(cudaFree(bufferValues));
     gpuErrchk(cudaFree(entry2nid));
   }
 
   __host__ __forceinline__ __device__ int* getEntries() { return entry2nid; }
 
-  __device__ __forceinline__ int16_t* lookupKey(size_t h) {
+  __device__ __forceinline__ int16_t* getKey(const size_t h) {
     if (entry2nid[h] == -1) {
       return nullptr;
     }
     return &keys[entry2nid[h] * pd];
   }
 
-  __device__ __forceinline__ scalar_t* lookupValue(size_t h) {
+  __device__ __forceinline__ scalar_t* getValue(const size_t h) {
     if (entry2nid[h] == -1) {
       return nullptr;
     }
     return &values[entry2nid[h] * vd];
   }
 
-  __device__ __forceinline__ scalar_t* lookupNewValue(size_t h) {
+  __device__ __forceinline__ scalar_t* getBufferValue(const size_t h) {
     if (entry2nid[h] == -1) {
       return nullptr;
     }
-    return &newValues[entry2nid[h] * vd];
+    return &bufferValues[entry2nid[h] * vd];
   }
 
-  __device__ __forceinline__ size_t modhash(int16_t* key) {
+  void swapBuffer() {
+    scalar_t* tmp = values;
+    values = bufferValues;
+    bufferValues = tmp;
+    for (size_t i = 0; i < capacity * vd; ++i) {
+      bufferValues[i] = static_cast<scalar_t>(0.0);
+    }
+  }
+
+  __device__ __forceinline__ size_t modhash(const int16_t* key) {
     size_t k = 0;
     for (uint16_t i = 0; i < pd; ++i) {
       k += static_cast<size_t>(key[i]);
@@ -145,7 +150,7 @@ public:
     return k % capacity;
   }
 
-  __device__ size_t insert(int16_t* key, int nid) {
+  __device__ size_t insert(const int16_t* key, const int nid) {
     size_t h = modhash(key);
 
     while (true) {
@@ -178,7 +183,7 @@ public:
     }
   }
 
-  __device__ int get(int16_t* key) {
+  __device__ int get(const int16_t* key) {
     size_t h = modhash(key);
 
     while (true) {
@@ -292,8 +297,7 @@ __global__ void splat_kernel(
       key[i] = y[i] + canonical[r * (pd + 1) + rank[i]];
     }
 
-    size_t h = table.insert(key, nid);
-    replay[nid].entry = h;
+    replay[nid].entry = table.insert(key, nid);
     replay[nid].weight = bary[r];
   }
 }
@@ -308,8 +312,7 @@ __global__ void process_hashtable_kernel(
   }
   const size_t r = blockIdx.y;
   const size_t pd = table.pd;
-
-  const size_t id = n * (pd + 1) + r;
+  const size_t nid = n * (pd + 1) + r;
 
   /**
    * NOTE: Hash table may have duplicate entries because
@@ -317,8 +320,15 @@ __global__ void process_hashtable_kernel(
    * the first key match to correct this.
    **/
   int* entries = table.getEntries();
-  if (entries[id] >= 0) {
-    entries[id] = entries[table.get(table.lookupKey(id))];
+  if (entries[nid] >= 0) {
+    auto h = table.get(table.getKey(nid));
+
+    // Every element not re-assigned is unique.
+    if (entries[nid] == entries[h]) {
+      gpuAtomicAdd(table.M, static_cast<int64_t>(1));
+    }
+
+    entries[nid] = entries[h];
   }
 }
 
@@ -338,7 +348,7 @@ __global__ void splat_value_kernel(
   const size_t nid = n * (pd + 1) + r;
   auto value = src[n];
 
-  scalar_t* val = table.lookupValue(replay[nid].entry);
+  scalar_t* val = table.getValue(replay[nid].entry);
   for (size_t i = 0; i < vd; ++i) {
     gpuAtomicAdd(&val[i], replay[nid].weight * value[i]);
   }
@@ -347,41 +357,42 @@ __global__ void splat_value_kernel(
 template <typename scalar_t>
 __global__ void blur_kernel(
     HashTableGPU<scalar_t> table,
-    const size_t d,
+    const size_t ax,
     const size_t order,
     int16_t* neighbors,
-    const scalar_t* zero) {
+    const scalar_t* zero,
+    const size_t* blurEntries) {
   const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
-  if (n >= table.N) {
+  if (n >= *table.M) {
     return;
   }
-  const size_t r = blockIdx.y;
   const size_t pd = table.pd;
   const size_t vd = table.vd;
+  const size_t nid = blurEntries[n];
 
-  const size_t id = n * (pd + 1) + r;
-  int16_t* neighbor = &neighbors[id * (pd + 1)];
+  int16_t* neighbor = &neighbors[n * (pd + 1)];
+  const int16_t* key = table.getKey(nid);
+  scalar_t* bufferVal = table.getBufferValue(nid);
 
-  const int16_t* key = table.lookupKey(id);
-  if (!key) {
-    return;
-  }
-
-  scalar_t* newVal = table.lookupNewValue(id);
-
-  for (int16_t o = -order; o <= order; ++o) {
+  for (int16_t o = -static_cast<int16_t>(order); o <= static_cast<int16_t>(order); ++o) {
     for (size_t p = 0; p < pd; ++p) {
       neighbor[p] = key[p] - o;
     }
-    neighbor[d] = key[d] + o * pd;
+    neighbor[ax] = key[ax] + o * pd;
 
     int h = table.get(neighbor);
-    const scalar_t* val = h >= 0 ? table.lookupValue(h) : zero;
+    const scalar_t* val = h >= 0 ? table.getValue(h) : zero;
     scalar_t c = get_binom_coef<scalar_t>(order, o);
     for (size_t v = 0; v < vd; ++v) {
-      gpuAtomicAdd(&newVal[v], c * val[v]);
+      // gpuAtomicAdd(&bufferVal[v], c * val[v]);
+      bufferVal[v] += c * val[v];
     }
   }
+}
+
+template <typename scalar_t>
+__global__ void buffer_swap_kernel(HashTableGPU<scalar_t> table) {
+  table.swapBuffer();
 }
 
 template <typename scalar_t>
@@ -402,7 +413,7 @@ __global__ void slice_kernel(
 
   for (size_t r = 0; r <= pd; ++r) {
     size_t nid = n * (pd + 1) + r;
-    scalar_t* val = table.lookupValue(replay[nid].entry);
+    scalar_t* val = table.getValue(replay[nid].entry);
     for (size_t j = 0; j < vd; ++j) {
       out[j] += (replay[nid].weight * val[j]) / scale;
     }
@@ -482,9 +493,35 @@ public:
     gpuErrchk(cudaFree(_matK));
   }
 
-  void blur(size_t d) {
+  /** FIXME: This needs to be moved to CUDA. Super slow for large hash tables. **/
+  std::vector<size_t> compute_blur_list() {
+    std::vector<size_t> entryArr;
+
+    std::set<int> s;
+    auto entries = hashTable.getEntries();
+    for (size_t i = 0; i < (N * (pd + 1)); ++i) {
+      auto ins = s.insert(entries[replay[i].entry]);
+      if (ins.second) {
+        entryArr.push_back(replay[i].entry);
+      }
+    }
+
+    return entryArr;
+  }
+
+  void blur() {
+    // Pre-compute all hash table entries for blur. 
+    auto entryArr = compute_blur_list();
+    const auto M = entryArr.size();
+
+    size_t* _blurEntries;
+    gpuErrchk(cudaMallocManaged(&_blurEntries, M * sizeof(size_t)));
+    for (size_t i = 0; i < M; ++i) {
+      _blurEntries[i] = entryArr[i];
+    }
+
     int16_t* _matNeK;
-    gpuErrchk(cudaMallocManaged(&_matNeK, N * (pd + 1) * sizeof(int16_t)));
+    gpuErrchk(cudaMallocManaged(&_matNeK, M * (pd + 1) * sizeof(int16_t)));
 
     scalar_t* zero;
     gpuErrchk(cudaMallocManaged(&zero, vd * sizeof(scalar_t)));
@@ -493,17 +530,22 @@ public:
     }
 
     const dim3 threads(BLOCK_SIZE);
-    const dim3 blocks((N + threads.x - 1) / threads.x, pd + 1);
+    const dim3 blocks((M + threads.x - 1) / threads.x);
 
-    blur_kernel<scalar_t><<<blocks, threads>>>(
-      hashTable, d, order,
-      _matNeK, zero);
-    gpuErrchk(cudaPeekAtLastError());
+    for (size_t ax = 0; ax <= pd; ++ax) {
+      blur_kernel<scalar_t><<<blocks, threads>>>(
+        hashTable, ax, order,
+        _matNeK, zero, _blurEntries);
+      gpuErrchk(cudaPeekAtLastError());
 
+      /** FIXME: potentially slow sequential process **/
+      gpuErrchk(cudaDeviceSynchronize());
+      hashTable.swapBuffer();
+    }
+
+    gpuErrchk(cudaFree(_blurEntries));
     gpuErrchk(cudaFree(zero));
     gpuErrchk(cudaFree(_matNeK));
-
-    hashTable.swapValues();
   }
 
   Tensor slice(Tensor src, Tensor ref) {
@@ -518,25 +560,45 @@ public:
     gpuErrchk(cudaPeekAtLastError());
 
     gpuErrchk(cudaDeviceSynchronize());
-
     return res;
   }
 
   Tensor filter(Tensor src, Tensor ref) {
+    #ifdef DEBUG
+    auto start_ts = Clock::now();
+    #endif
+
     splat(src, ref);
 
-    for (size_t d = 0; d <= pd; ++d) {
-      blur(d);
-    }
+    #ifdef DEBUG
+    auto elapsed_ts = NANO_CAST(Clock::now() - start_ts).count();
+    std::cout << "Hash table size: " << *hashTable.M << std::endl;
+    std::cout << "Splat: " << elapsed_ts << " ns" << std::endl;
+    #endif
 
-    Tensor res = slice(src, ref);
+    c10::cuda::CUDACachingAllocator::emptyCache();
 
-    // int* entries = hashTable.getEntries();
-    // std::set<int> s;
-    // for (size_t i = 0; i < (N * (pd + 1)); ++i) {
-    //   if (entries[i] >= 0) { s.insert(entries[i]); }
-    // }
-    // std::cout << "Hash table size: " << s.size() << std::endl;
+    #ifdef DEBUG
+    start_ts = Clock::now();
+    #endif
+
+    blur();
+
+    #ifdef DEBUG
+    elapsed_ts = NANO_CAST(Clock::now() - start_ts).count();
+    std::cout << "Blur: " << elapsed_ts << " ns" << std::endl;
+    #endif
+
+    #ifdef DEBUG
+    start_ts = Clock::now();
+    #endif
+
+    auto res = slice(src, ref);
+
+    #ifdef DEBUG
+    elapsed_ts = NANO_CAST(Clock::now() - start_ts).count();
+    std::cout << "Slice: " << elapsed_ts << " ns" << std::endl;
+    #endif
 
     return res;
   }

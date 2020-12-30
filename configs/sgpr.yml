@@ -8,18 +8,19 @@ parameters:
       - keggdirected
       - precipitation3d_all
   epochs:
-    value: 100
+    value: 200
   lr:
     value: 0.01
   lanc_iter:
     value: 100
   pre_size:
-    value: 20
+    value: 10
   n_inducing:
-    value: 500
+    value: 512
 program: experiments/train_sgpr.py
 command:
   - ${env}
   - ${interpreter}
   - ${program}
+  - --device=-1
   - ${args}

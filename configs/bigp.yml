@@ -8,16 +8,17 @@ parameters:
       - keggdirected
       - precipitation3d_all
   epochs:
-    value: 100
+    value: 200
   lr:
-    value: 0.05
+    value: 0.01
   lanc_iter:
     value: 100
   pre_size:
-    value: 20
+    value: 10
 program: experiments/train_bigp.py
 command:
   - ${env}
   - ${interpreter}
   - ${program}
+  - --device=-1
   - ${args}

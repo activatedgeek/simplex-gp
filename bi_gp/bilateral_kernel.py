@@ -10,22 +10,15 @@ import math
 import gpytorch
 from functools import partial
 from bi_gp.gaussian_matrix import LatticeFilter,LatticeFilterGeneral
-
+from bi_gp.discretized_coefficients import get_coeffs
 
 class LazyBilateral(LazyTensor):
     def __init__(self,x):
         super().__init__(x)
         self.x = x
-        self._use_gpu=False
-    def to(self,device): #TODO: accept more general .to arguments
-        if device in ('cpu',):
-            self._use_gpu=False
-        if device in ('gpu',):
-            self._use_gpu=True
-        return super().to(device)
 
     def _matmul(self,V):
-        return LatticeFilter.apply(V,self.x,gpu=self._use_gpu)
+        return LatticeFilter.apply(V,self.x)
     def _size(self):
         return torch.Size((self.x.shape[-2],self.x.shape[-2]))
     def _transpose_nonbatch(self):
@@ -67,18 +60,10 @@ class SquareLazyLattice(LazyTensor):
     def __init__(self,x,dkernel):
         super().__init__(x)
         self.x = x
-        self._use_gpu=False
         self.dkernel=dkernel
 
-    def to(self,device): #TODO: accept more general .to arguments
-        if device in ('cpu',):
-            self._use_gpu=False
-        if device in ('gpu',):
-            self._use_gpu=True
-        return super().to(device)
-
     def _matmul(self,V):
-        return LatticeFilterGeneral.apply(V,self.x,self.dkernel,gpu=self._use_gpu)
+        return LatticeFilterGeneral.apply(V,self.x,self.dkernel)
     def _size(self):
         return torch.Size((self.x.shape[-2],self.x.shape[-2]))
     def _transpose_nonbatch(self):
@@ -93,12 +78,7 @@ class RectangularLazyLattice(LazyTensor):
         self.xout = xout
         self.dkernel=dkernel
         self._use_gpu=False
-    def to(self,device): #TODO: accept more general .to arguments
-        if device in ('cpu',):
-            self._use_gpu=False
-        if device in ('gpu',):
-            self._use_gpu=True
-        return super().to(device)
+
     def _matmul(self,V):
         n = V.shape[-2]
         assert n==self.xout.shape[-2], f"mismatched shapes? {V.shape,self.xout.shape}"
@@ -120,12 +100,15 @@ class DiscretizedKernelFN(nn.Module):
         self.order = order
     def get_coeffs(self):
         if self._forward_coeffs is None:
-            self._forward_coeffs = get_coeffs(self.kernel_fn)
+            self._forward_coeffs = get_coeffs(self.kernel_fn,self.order)
         return self._forward_coeffs
     def get_deriv_coeffs(self):
         if self._deriv_coeffs is None:
-            self._deriv_coeffs = get_coeffs(lambda x: torch.autograd.grad(self.kernel_fn(x),x)[0].item()/x)
+            self._deriv_coeffs = get_coeffs(lambda x: torch.autograd.grad(self.kernel_fn(x),x)[0].item()/x,self.order)
         return self._deriv_coeffs
+
+
+
 
 class LatticeAccelerated(Kernel):
     has_lengthscale=True
