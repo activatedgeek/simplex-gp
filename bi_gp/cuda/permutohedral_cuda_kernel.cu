@@ -8,9 +8,11 @@
 #include <THC/THCAtomics.cuh>
 
 using at::Tensor;
-// typedef std::chrono::high_resolution_clock Clock;
+typedef std::chrono::high_resolution_clock Clock;
 
-// #define NANO_CAST(d) std::chrono::duration_cast<std::chrono::nanoseconds>(d)
+// #define DEBUG
+
+#define NANO_CAST(d) std::chrono::duration_cast<std::chrono::nanoseconds>(d)
 #define BLOCK_SIZE 1024
 #define PTAccessor2D(T) at::PackedTensorAccessor32<T,2,at::RestrictPtrTraits>
 #define Accessor1Di(T) at::TensorAccessor<T,1,at::RestrictPtrTraits,int32_t>
@@ -382,7 +384,8 @@ __global__ void blur_kernel(
     const scalar_t* val = h >= 0 ? table.getValue(h) : zero;
     scalar_t c = get_binom_coef<scalar_t>(order, o);
     for (size_t v = 0; v < vd; ++v) {
-      gpuAtomicAdd(&bufferVal[v], c * val[v]);
+      // gpuAtomicAdd(&bufferVal[v], c * val[v]);
+      bufferVal[v] += c * val[v];
     }
   }
 }
@@ -510,7 +513,6 @@ public:
     // Pre-compute all hash table entries for blur. 
     auto entryArr = compute_blur_list();
     const auto M = entryArr.size();
-    // std::cout << "Hash table size: " << *hashTable.M << std::endl;
 
     size_t* _blurEntries;
     gpuErrchk(cudaMallocManaged(&_blurEntries, M * sizeof(size_t)));
@@ -536,10 +538,7 @@ public:
         _matNeK, zero, _blurEntries);
       gpuErrchk(cudaPeekAtLastError());
 
-      /** FIXME: CUDA swap kernel leads to wrong results. why? **/
-      // buffer_swap_kernel<scalar_t><<<1,1>>>(hashTable);
-      // gpuErrchk(cudaPeekAtLastError());
-
+      /** FIXME: potentially slow sequential process **/
       gpuErrchk(cudaDeviceSynchronize());
       hashTable.swapBuffer();
     }
@@ -565,13 +564,43 @@ public:
   }
 
   Tensor filter(Tensor src, Tensor ref) {
+    #ifdef DEBUG
+    auto start_ts = Clock::now();
+    #endif
+
     splat(src, ref);
+
+    #ifdef DEBUG
+    auto elapsed_ts = NANO_CAST(Clock::now() - start_ts).count();
+    std::cout << "Hash table size: " << *hashTable.M << std::endl;
+    std::cout << "Splat: " << elapsed_ts << " ns" << std::endl;
+    #endif
 
     c10::cuda::CUDACachingAllocator::emptyCache();
 
+    #ifdef DEBUG
+    start_ts = Clock::now();
+    #endif
+
     blur();
 
-    return slice(src, ref);
+    #ifdef DEBUG
+    elapsed_ts = NANO_CAST(Clock::now() - start_ts).count();
+    std::cout << "Blur: " << elapsed_ts << " ns" << std::endl;
+    #endif
+
+    #ifdef DEBUG
+    start_ts = Clock::now();
+    #endif
+
+    auto res = slice(src, ref);
+
+    #ifdef DEBUG
+    elapsed_ts = NANO_CAST(Clock::now() - start_ts).count();
+    std::cout << "Slice: " << elapsed_ts << " ns" << std::endl;
+    #endif
+
+    return res;
   }
 };
 
