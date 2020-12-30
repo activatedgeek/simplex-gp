@@ -47,7 +47,7 @@ if __name__ == "__main__":
 
   with torch.no_grad():
     ref = torch.arange(0., 5., 1.).unsqueeze(-1).float()
-    # ref = torch.rand(1000, 30).float()
+    # ref = torch.rand(100000, 20).float()
     src = (ref**2).cos()
 
   print(f'N: {ref.size(0)}, pD: {ref.size(1)}')
@@ -58,17 +58,15 @@ if __name__ == "__main__":
 
   res_gpu = test_gpu(root, src, ref).cpu()
 
-  try:
-    assert torch.allclose(res_cpu, res_gpu), 'CPU/GPU mismatch.'
-  except AssertionError:
-    rel_err = (res_cpu - res_gpu).norm(p=2) / res_cpu.norm(p=2)
-    print(f'Relative error: {rel_err:.6f} (this may be small enough to be ok!)')
-    
-    print('CPU:')
-    print(res_cpu)
-    print('GPU:')
-    print(res_gpu)
+  print('-------------------------------')
 
-    raise
-
-  print('Matched!')
+  ## May still be small enough to be ok.
+  rel_err = (res_cpu - res_gpu).norm(p=2) / res_cpu.norm(p=2)
+  abs_rel_err = (res_cpu - res_gpu).norm(p=1) / res_cpu.norm(p=1)
+  print(f'Rel. Err.: {rel_err}')
+  print(f'Abs. Rel. Err.: {abs_rel_err}')
+  
+  # print('CPU:')
+  # print(res_cpu)
+  # print('GPU:')
+  # print(res_gpu)

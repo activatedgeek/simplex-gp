@@ -130,7 +130,7 @@ public:
     return &bufferValues[entry2nid[h] * vd];
   }
 
-  __host__ __device__ void swapBuffer() {
+  void swapBuffer() {
     scalar_t* tmp = values;
     values = bufferValues;
     bufferValues = tmp;
@@ -368,7 +368,7 @@ __global__ void blur_kernel(
   const size_t vd = table.vd;
   const size_t nid = blurEntries[n];
 
-  int16_t* neighbor = &neighbors[nid * (pd + 1)];
+  int16_t* neighbor = &neighbors[n * (pd + 1)];
   const int16_t* key = table.getKey(nid);
   scalar_t* bufferVal = table.getBufferValue(nid);
 
