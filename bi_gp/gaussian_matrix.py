@@ -31,7 +31,7 @@ class LatticeFilterGeneral(Function):
         ctx.save_for_backward(source,reference) # TODO: add batch compatibility
         ctx.gpu = source.is_cuda
         ctx.kernel_fn= kernel_fn
-        filtermethod = gpulattice if gpu else cpulattice
+        filtermethod = gpulattice if ctx.gpu else cpulattice
         filtered_output = filtermethod(source,reference.contiguous(),kernel_fn.get_coeffs())
         return filtered_output
     @staticmethod
