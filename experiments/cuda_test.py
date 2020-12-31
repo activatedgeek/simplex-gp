@@ -3,13 +3,15 @@ from pathlib import Path
 import torch
 from torch.utils.cpp_extension import load
 from timeit import default_timer as timer
+from utils import UCIDataset
 
+def test_cpu(src, ref, cdebug=False):
+  root = Path(os.path.dirname(__file__)) / '..'
 
-def test_cpu(root, src, ref, cdebug=False):
   cpu_lattice = load(name=f'cpu_lattice{"_debug" if cdebug else ""}',
                      verbose=cdebug,
                      extra_cflags=['-DDEBUG'] if cdebug else None,
-                     sources=[(root / '..' / 'lattice.cpp')])
+                     sources=[(root / 'bi_gp' / 'lattice.cpp')])
   
   start = timer()
 
@@ -18,7 +20,8 @@ def test_cpu(root, src, ref, cdebug=False):
   ts = timer() - start
   return res, ts
 
-def test_gpu(root, src, ref, cdebug=False):
+def test_gpu(src, ref, cdebug=False):
+  root = Path(os.path.dirname(__file__)) / '..'
   device = 'cuda:0' if torch.cuda.is_available() else None
 
   assert device is not None
@@ -31,8 +34,8 @@ def test_gpu(root, src, ref, cdebug=False):
                      extra_cflags=['-DDEBUG'] if cdebug else None,
                      extra_cuda_cflags=['-DDEBUG'] if cdebug else None,
                      sources=[
-                       (root / 'permutohedral_cuda.cpp'),
-                       (root / 'permutohedral_cuda_kernel.cu')
+                       (root / 'bi_gp' / 'cuda' / 'permutohedral_cuda.cpp'),
+                       (root / 'bi_gp' / 'cuda' /'permutohedral_cuda_kernel.cu')
                      ])
 
   start = timer()
@@ -42,26 +45,32 @@ def test_gpu(root, src, ref, cdebug=False):
   ts = timer() - start
   return res, ts
 
-def main(n=1000, d=10, cdebug=True):
-  root = Path(os.path.dirname(__file__))
-
-  with torch.no_grad():
-    ref = torch.rand(n, d).float()
-    src = ref.norm(dim=-1, keepdim=True)
+def main(dataset=None, n=1000, pd=10, vd=1, cdebug=True):
+  if dataset is not None:
+    uci_data_dir = Path(os.path.join(os.environ.get('DATADIR'), 'uci'))
+    data = UCIDataset.create(dataset, uci_data_dir=uci_data_dir, train_val_split=1.0)
+    ref = data.x
+    ref = (ref - ref.mean(dim=0, keepdim=True)) / ref.std(dim=0, keepdim=True)
+    n, pd = ref.shape
+  else:
+    with torch.no_grad():
+      ref = torch.rand(n, pd).float()
+  ref = ref.contiguous()
+  src = torch.randn(n, vd).float()
 
   print(f'N: {ref.size(0)}, pD: {ref.size(1)}')
 
-  res_cpu, ts_cpu = test_cpu(root, src, ref, cdebug=cdebug)
+  res_cpu, ts_cpu = test_cpu(src, ref, cdebug=cdebug)
 
   print('-------------------------------')
 
-  res_gpu, ts_gpu = test_gpu(root, src, ref, cdebug=cdebug)
+  res_gpu, ts_gpu = test_gpu(src, ref, cdebug=cdebug)
   res_gpu = res_gpu.cpu()
 
   print('-------------------------------')
 
   try:
-    assert torch.allclose(res_cpu, res_gpu), 'CPU/GPU mismatch!'
+    assert torch.allclose(res_cpu, res_gpu), 'Possible CPU/GPU mismatch!'
     print('Matched!')
   except AssertionError as aexc:
     rel_err = (res_cpu - res_gpu).norm(p=2) / res_cpu.norm(p=2)
@@ -74,10 +83,10 @@ def main(n=1000, d=10, cdebug=True):
     print(f'Abs. Rel. Err.: {abs_rel_err}')
     print(f'Pointwise Abs. Err.: {delta_mu} +/- {delta_std}')
     
-    print('CPU Output:')
-    print(res_cpu)
-    print('GPU Output:')
-    print(res_gpu)
+    # print('CPU Output:')
+    # print(res_cpu)
+    # print('GPU Output:')
+    # print(res_gpu)
 
     ## Relative errors may still be small enough to be ok.
     print(aexc)

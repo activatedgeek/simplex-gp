@@ -52,6 +52,7 @@ class UCIDataset(Dataset):
         mode: str = "train",
         dtype=torch.float32,
         device="cpu",
+        train_val_split=0.8,
     ):
         dataset_path = Path(dataset_path)
         self.dataset_path = dataset_path
@@ -61,8 +62,8 @@ class UCIDataset(Dataset):
 
         # make train/val/test split
         N = data.size(0)
-        n_train_val = int(0.8 * N)
-        n_train = int(0.8 * n_train_val)
+        n_train_val = int(train_val_split * N)
+        n_train = int(train_val_split * n_train_val)
 
         train_x, train_y = data[:n_train, :-1], data[:n_train, -1]
         val_x, val_y = data[n_train:n_train_val, :-1], data[n_train:n_train_val, -1]
@@ -92,7 +93,7 @@ class UCIDataset(Dataset):
         return [p.stem for p in UCIDataset.all_dataset_paths(uci_data_dir)]
 
     @staticmethod
-    def create(*names: Union[str, list], uci_data_dir: Path = None, mode="train", dtype=torch.float32, device="cpu") -> List:
+    def create(*names: Union[str, list], uci_data_dir: Path = None, mode="train", dtype=torch.float32, device="cpu", train_val_split=0.8) -> List:
         """Create one or more `UCIDataset`s from their names
 
         `names` can be the name of a group of datasets as listed below
@@ -159,7 +160,7 @@ class UCIDataset(Dataset):
             **{p.stem: [p] for p in UCIDataset.all_dataset_paths(uci_data_dir)},
         }
         datasets = itertools.chain.from_iterable([groups[g_or_n] for g_or_n in names])
-        datasets = [UCIDataset(dataset_path, mode=mode, device=device, dtype=dtype) for dataset_path in datasets]
+        datasets = [UCIDataset(dataset_path, mode=mode, device=device, dtype=dtype, train_val_split=train_val_split) for dataset_path in datasets]
         if len(datasets) == 1:
             return datasets[0]
         else:

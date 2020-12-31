@@ -191,6 +191,7 @@ public:
 
   __device__ int get(const int16_t* key) {
     size_t h = modhash(key);
+    bool loop = false;
 
     while (true) {
       int nid = entry2nid[h];
@@ -209,6 +210,11 @@ public:
       ++h;
       if (h == capacity) {
         h = 0;
+        // Linear probe finished.
+        if (loop) {
+          return -1;
+        }
+        loop = true;
       }
     }
   }
