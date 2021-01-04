@@ -72,6 +72,7 @@ private:
    * Each entry then maps to the lattice point.
    **/
   int* entry2nid;
+  uint8_t* uqentry;
 public:
   size_t N, pd, vd, capacity;
   int64_t* M; // for actual size after splat.
@@ -90,8 +91,10 @@ public:
     }
 
     gpuErrchk(cudaMallocManaged(&entry2nid, capacity * sizeof(int)));
+    gpuErrchk(cudaMallocManaged(&uqentry, capacity * sizeof(uint8_t)));
     for (size_t i = 0; i < capacity; ++i) {
       entry2nid[i] = static_cast<int>(-1);
+      uqentry[i] = static_cast<uint8_t>(0);
     }
 
     gpuErrchk(cudaMallocManaged(&M, sizeof(int64_t)));
@@ -107,9 +110,12 @@ public:
     gpuErrchk(cudaFree(values));
     gpuErrchk(cudaFree(bufferValues));
     gpuErrchk(cudaFree(entry2nid));
+    gpuErrchk(cudaFree(uqentry));
   }
 
-  __host__ __forceinline__ __device__ int* getEntries() { return entry2nid; }
+  __device__ __forceinline__ int* getEntries() { return entry2nid; }
+
+  __device__ __forceinline__ uint8_t* getUqEntries() { return uqentry; }
 
   __device__ __forceinline__ int16_t* getKey(const size_t h) {
     if (entry2nid[h] == -1) {
@@ -185,6 +191,7 @@ public:
 
   __device__ int get(const int16_t* key) {
     size_t h = modhash(key);
+    bool loop = false;
 
     while (true) {
       int nid = entry2nid[h];
@@ -203,6 +210,11 @@ public:
       ++h;
       if (h == capacity) {
         h = 0;
+        // Linear probe finished.
+        if (loop) {
+          return -1;
+        }
+        loop = true;
       }
     }
   }
@@ -305,31 +317,38 @@ __global__ void splat_kernel(
 template <typename scalar_t>
 __global__ void process_hashtable_kernel(
   HashTableGPU<scalar_t> table) {
-  
-  const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
-  if (n >= table.N) {
-    return;
-  }
-  const size_t r = blockIdx.y;
-  const size_t pd = table.pd;
-  const size_t nid = n * (pd + 1) + r;
-
   /**
    * NOTE: Hash table may have duplicate entries because
    * linear probing is not atomic. Assign every entry to
    * the first key match to correct this.
-   **/
-  int* entries = table.getEntries();
-  if (entries[nid] >= 0) {
-    auto h = table.get(table.getKey(nid));
-
-    // Every element not re-assigned is unique.
-    if (entries[nid] == entries[h]) {
-      gpuAtomicAdd(table.M, static_cast<int64_t>(1));
-    }
-
-    entries[nid] = entries[h];
+   **/  
+  const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
+  if (n >= table.N) {
+    return;
   }
+  const size_t pd = table.pd;
+
+  int* entries = table.getEntries();
+  uint8_t* uqentries = table.getUqEntries();
+  int64_t subcount = 0;
+  
+  for (size_t r = 0; r <= pd; ++r) {
+    const size_t nid = n * (pd + 1) + r;
+
+    if (entries[nid] >= 0) {
+      auto h = table.get(table.getKey(nid));
+
+      // Every element not re-assigned is unique.
+      if (entries[nid] == entries[h]) {
+        uqentries[nid] = static_cast<uint8_t>(1);
+        subcount++;
+      }
+
+      entries[nid] = entries[h];
+    }
+  }
+
+  gpuAtomicAdd(table.M, subcount);
 }
 
 template <typename scalar_t>
@@ -342,15 +361,16 @@ __global__ void splat_value_kernel(
   if (n >= table.N) {
     return;
   }
-  const size_t r = blockIdx.y;
   const size_t pd = table.pd;
   const size_t vd = src.size(1);
-  const size_t nid = n * (pd + 1) + r;
   auto value = src[n];
-
-  scalar_t* val = table.getValue(replay[nid].entry);
-  for (size_t i = 0; i < vd; ++i) {
-    gpuAtomicAdd(&val[i], replay[nid].weight * value[i]);
+  
+  for (size_t r = 0; r <= pd; ++r) {
+    const size_t nid = n * (pd + 1) + r;
+    scalar_t* val = table.getValue(replay[nid].entry);
+    for (size_t i = 0; i < vd; ++i) {
+      gpuAtomicAdd(&val[i], replay[nid].weight * value[i]);
+    }
   }
 }
 
@@ -360,39 +380,41 @@ __global__ void blur_kernel(
     const size_t ax,
     const size_t order,
     int16_t* neighbors,
-    const scalar_t* zero,
-    const size_t* blurEntries) {
+    const scalar_t* zero) {
   const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
-  if (n >= *table.M) {
+  if (n >= table.N) {
     return;
   }
   const size_t pd = table.pd;
   const size_t vd = table.vd;
-  const size_t nid = blurEntries[n];
-
+  const uint8_t* uqentries = table.getUqEntries();
   int16_t* neighbor = &neighbors[n * (pd + 1)];
-  const int16_t* key = table.getKey(nid);
-  scalar_t* bufferVal = table.getBufferValue(nid);
 
-  for (int16_t o = -static_cast<int16_t>(order); o <= static_cast<int16_t>(order); ++o) {
-    for (size_t p = 0; p < pd; ++p) {
-      neighbor[p] = key[p] - o;
+  for (size_t r = 0; r <= pd; ++r) {
+    const size_t nid = n * (pd + 1) + r;
+    if (!uqentries[nid]) {
+      // Must have been processed at its lattice node.
+      continue;
     }
-    neighbor[ax] = key[ax] + o * pd;
 
-    int h = table.get(neighbor);
-    const scalar_t* val = h >= 0 ? table.getValue(h) : zero;
-    scalar_t c = get_binom_coef<scalar_t>(order, o);
-    for (size_t v = 0; v < vd; ++v) {
-      // gpuAtomicAdd(&bufferVal[v], c * val[v]);
-      bufferVal[v] += c * val[v];
+    const int16_t* key = table.getKey(nid);
+    scalar_t* bufferVal = table.getBufferValue(nid);
+
+    for (int16_t o = -static_cast<int16_t>(order); o <= static_cast<int16_t>(order); ++o) {
+      for (size_t p = 0; p < pd; ++p) {
+        neighbor[p] = key[p] - o;
+      }
+      neighbor[ax] = key[ax] + o * pd;
+
+      int h = table.get(neighbor);
+      const scalar_t* val = h >= 0 ? table.getValue(h) : zero;
+      scalar_t c = get_binom_coef<scalar_t>(order, o);
+      for (size_t v = 0; v < vd; ++v) {
+        // gpuAtomicAdd(&bufferVal[v], c * val[v]);
+        bufferVal[v] += c * val[v];
+      }
     }
   }
-}
-
-template <typename scalar_t>
-__global__ void buffer_swap_kernel(HashTableGPU<scalar_t> table) {
-  table.swapBuffer();
 }
 
 template <typename scalar_t>
@@ -469,7 +491,7 @@ public:
     gpuErrchk(cudaMallocManaged(&_matK, N * pd * sizeof(int16_t)));
 
     const dim3 threads(BLOCK_SIZE);
-    dim3 blocks((N + threads.x - 1) / threads.x);
+    const dim3 blocks((N + threads.x - 1) / threads.x);
 
     splat_kernel<scalar_t><<<blocks, threads>>>(
       Ten2PTAccessor2D(scalar_t,ref),
@@ -479,8 +501,6 @@ public:
       scaleFactor, canonical,
       hashTable, replay);
     gpuErrchk(cudaPeekAtLastError());
-
-    blocks.y = pd + 1;
 
     process_hashtable_kernel<scalar_t><<<blocks,threads>>>(hashTable);
     gpuErrchk(cudaPeekAtLastError());
@@ -493,35 +513,9 @@ public:
     gpuErrchk(cudaFree(_matK));
   }
 
-  /** FIXME: This needs to be moved to CUDA. Super slow for large hash tables. **/
-  std::vector<size_t> compute_blur_list() {
-    std::vector<size_t> entryArr;
-
-    std::set<int> s;
-    auto entries = hashTable.getEntries();
-    for (size_t i = 0; i < (N * (pd + 1)); ++i) {
-      auto ins = s.insert(entries[replay[i].entry]);
-      if (ins.second) {
-        entryArr.push_back(replay[i].entry);
-      }
-    }
-
-    return entryArr;
-  }
-
   void blur() {
-    // Pre-compute all hash table entries for blur. 
-    auto entryArr = compute_blur_list();
-    const auto M = entryArr.size();
-
-    size_t* _blurEntries;
-    gpuErrchk(cudaMallocManaged(&_blurEntries, M * sizeof(size_t)));
-    for (size_t i = 0; i < M; ++i) {
-      _blurEntries[i] = entryArr[i];
-    }
-
     int16_t* _matNeK;
-    gpuErrchk(cudaMallocManaged(&_matNeK, M * (pd + 1) * sizeof(int16_t)));
+    gpuErrchk(cudaMallocManaged(&_matNeK, N * (pd + 1) * sizeof(int16_t)));
 
     scalar_t* zero;
     gpuErrchk(cudaMallocManaged(&zero, vd * sizeof(scalar_t)));
@@ -530,20 +524,18 @@ public:
     }
 
     const dim3 threads(BLOCK_SIZE);
-    const dim3 blocks((M + threads.x - 1) / threads.x);
+    const dim3 blocks((N + threads.x - 1) / threads.x);
 
     for (size_t ax = 0; ax <= pd; ++ax) {
       blur_kernel<scalar_t><<<blocks, threads>>>(
         hashTable, ax, order,
-        _matNeK, zero, _blurEntries);
+        _matNeK, zero);
       gpuErrchk(cudaPeekAtLastError());
 
-      /** FIXME: potentially slow sequential process **/
       gpuErrchk(cudaDeviceSynchronize());
       hashTable.swapBuffer();
     }
 
-    gpuErrchk(cudaFree(_blurEntries));
     gpuErrchk(cudaFree(zero));
     gpuErrchk(cudaFree(_matNeK));
   }
