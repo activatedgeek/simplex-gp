@@ -104,9 +104,7 @@ class DiscretizedKernelFN(nn.Module):
             with torch.autograd.enable_grad():
                 z = x**2+torch.zeros_like(x,requires_grad=True)
                 g = torch.autograd.grad(self.kernel_fn(z).sum(),z)[0]
-                #print('gshape',g.shape)
-            return g#torch.where(z.abs()>1e-5,z,z+1e-5)
-        #self._deriv_coeffs = get_coeffs((lambda x: torch.autograd.grad(self.kernel_fn(x),x)/x),self.order)
+            return g
         self._deriv_coeffs = get_coeffs(gradkern,self.order)
         print(f"Discretized kernel deriv coeffs: {self._deriv_coeffs}")
     def get_coeffs(self):
@@ -143,9 +141,32 @@ def rbf(d2):
 # class Matern(Function):
 #     @staticmethod
 #     def forward(ctx,d2,nu=.5):
-
+#         d  =d2.abs().sqrt()#(d2.abs()+1e-3).sqrt()
+#         exp_component = torch.exp(-np.sqrt(nu * 2) * d)
+#         if nu == 0.5:
+#             constant_component = 1
+#         elif nu == 1.5:
+#             constant_component = (np.sqrt(3) * d).add(1)
+#         elif nu == 2.5:
+#             constant_component = (np.sqrt(5) * d).add(1).add(5.0 / 3.0 * d ** 2)
+#         else:
+#             raise NotImplementedError
+#         if any(ctx.needs_input_grad):
+#             ctx.nu=nu
+#             ctx.save_for_backward(exp_component)
+#         return constant_component * exp_component
 #     @staticmethod
 #     def backward(ctx,grad_output):
+#         if ctx.needs_input_grad[1]: raise NotImplementedError # Gradients wrt to nu are not currently supported
+#         exp = ctx.saved_tensors
+#         if ctx.nu == 0.5:
+#             g = 
+#         elif ctx.nu == 1.5:
+#             constant_component = (np.sqrt(3) * d).add(1)
+#         elif ctx.nu == 2.5:
+#             constant_component = (np.sqrt(5) * d).add(1).add(5.0 / 3.0 * d ** 2)
+#         else:
+#             raise NotImplementedError
 #         return grad_source, grad_reference,None
 
 def matern(d2,nu=.5):

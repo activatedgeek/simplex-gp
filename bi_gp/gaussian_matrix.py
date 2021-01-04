@@ -28,10 +28,11 @@ class LatticeFilterGeneral(Function):
         # Typical runtime of O(nd^2 + n*L), Worst case O(nd^2 + n*L*d)
         assert source.shape[0] == reference.shape[0], \
             "Incompatible shapes {}, and {}".format(source.shape,reference.shape)
-        ctx.save_for_backward(source,reference) # TODO: add batch compatibility
-        ctx.gpu = source.is_cuda
-        ctx.kernel_fn= kernel_fn
-        filtermethod = gpulattice if ctx.gpu else cpulattice
+        if any(ctx.needs_input_grad):
+            ctx.save_for_backward(source,reference) # TODO: add batch compatibility
+            ctx.gpu = source.is_cuda
+            ctx.kernel_fn= kernel_fn
+        filtermethod = gpulattice if source.is_cuda else cpulattice
         filtered_output = filtermethod(source,reference.contiguous(),kernel_fn.get_coeffs())
         return filtered_output
     @staticmethod

@@ -17,7 +17,6 @@ def get_coeffs(kernel_fn,order):
     obj_fn = partial(coverage_diff,order=order,x=x,w=w,fn_values=fn_values,fft_values=fft_values)
     s = binary_search(0,(.1,9),obj_fn,1e-4) # Search for zeros of objective function (up to 1e-4 precision)
     vals = kernel_fn(s*torch.arange(-order,order+1).float())
-    print(vals)
     return vals/vals[order]
 
 def coverage_diff(spacing,order,x,w,fn_values,fft_values):
