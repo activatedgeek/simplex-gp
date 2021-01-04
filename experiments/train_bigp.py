@@ -11,13 +11,15 @@ from utils import set_seeds, prepare_dataset
 
 
 class BilateralGPModel(gp.models.ExactGP):
-    def __init__(self, train_x, train_y):
+    def __init__(self, train_x, train_y,matern_nu=None):
         likelihood = gp.likelihoods.GaussianLikelihood(
                       noise_constraint=gp.constraints.GreaterThan(1e-4))
         super().__init__(train_x, train_y, likelihood)
         self.mean_module = gp.means.ConstantMean()
-        self.covar_module = gp.kernels.ScaleKernel(RBFLattice(ard_num_dims=train_x.size(-1)))
-
+        if matern_nu is None:
+            self.covar_module = gp.kernels.ScaleKernel(RBFLattice(ard_num_dims=train_x.size(-1)))
+        else:
+            self.covar_module = gp.kernels.ScaleKernel(MaternLattice(ard_num_dims=train_x.size(-1),nu=matern_nu))
     def forward(self, x):
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
@@ -78,7 +80,7 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
 
 
 def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int = None, device: int = 0,
-         epochs: int = 100, lr: int = 1e-3, lanc_iter: int = 100, pre_size: int = 10):
+         epochs: int = 100, lr: int = 1e-3, lanc_iter: int = 100, pre_size: int = 10,matern_nu=None): # if nu not specified assume RBF
     set_seeds(seed)
     device = f"cuda:{device}" if (device >= 0 and torch.cuda.is_available()) else "cpu"
 
@@ -101,7 +103,7 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
       'N_val': val_x.size(0),
     })
 
-    model = BilateralGPModel(train_x, train_y).to(device)
+    model = BilateralGPModel(train_x, train_y,matern_nu).to(device)
     mll = gp.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
