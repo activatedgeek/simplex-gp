@@ -6,7 +6,7 @@ import wandb
 from pathlib import Path
 from timeit import default_timer as timer
 
-from bi_gp.bilateral_kernel import BilateralKernel
+from bi_gp.bilateral_kernel import BilateralKernel,MaternLattice,RBFLattice
 from utils import set_seeds, prepare_dataset
 
 
@@ -16,7 +16,7 @@ class BilateralGPModel(gp.models.ExactGP):
                       noise_constraint=gp.constraints.GreaterThan(1e-4))
         super().__init__(train_x, train_y, likelihood)
         self.mean_module = gp.means.ConstantMean()
-        self.covar_module = gp.kernels.ScaleKernel(BilateralKernel(ard_num_dims=train_x.size(-1)))
+        self.covar_module = gp.kernels.ScaleKernel(MaternLattice(ard_num_dims=train_x.size(-1),nu=1/2))
 
     def forward(self, x):
         mean_x = self.mean_module(x)

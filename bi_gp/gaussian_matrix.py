@@ -68,7 +68,7 @@ class LatticeFilterGeneral(Function):
                 s.append(time.time())
                 s = np.array(s)
             #print(f"{s[1:]-s[:-1]}")
-        return grad_source, grad_reference
+        return grad_source, grad_reference,None
 
 
 if __name__=="__main__":

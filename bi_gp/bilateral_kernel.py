@@ -85,7 +85,7 @@ class RectangularLazyLattice(LazyTensor):
         x_large = torch.cat([self.xout,self.xin],dim=-2)
         V_large = torch.zeros(*V.shape[:-2],x_large.shape[-2],V.shape[-1],device=V.device,dtype=V.dtype)
         V_large[...,:n,:] += V
-        return LatticeFilterGeneral.apply(V_large,x_large,self.dkernel,gpu=self._use_gpu)[...,n:,:]
+        return LatticeFilterGeneral.apply(V_large,x_large,self.dkernel)[...,n:,:]
     def _size(self):
         return torch.Size((*self.xin.shape[:-1],self.xout.shape[-2]))
     def _transpose_nonbatch(self):
@@ -139,8 +139,17 @@ class LatticeAccelerated(Kernel):
 def rbf(d2):
     return torch.exp(-d2)
 
+# from torch.autograd import Function
+# class Matern(Function):
+#     @staticmethod
+#     def forward(ctx,d2,nu=.5):
+
+#     @staticmethod
+#     def backward(ctx,grad_output):
+#         return grad_source, grad_reference,None
+
 def matern(d2,nu=.5):
-    d  =d2.abs().sqrt()
+    d  =d2.abs().sqrt()#(d2.abs()+1e-3).sqrt()
     exp_component = torch.exp(-np.sqrt(nu * 2) * d)
     if nu == 0.5:
         constant_component = 1
