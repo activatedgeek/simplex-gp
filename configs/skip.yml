@@ -1,29 +1,29 @@
 name: SKIP
-# method: random
 method: grid
 parameters:
   dataset:
     values:
-      - elevators
+      - elevators_all
       - houseelectric
       - keggdirected
+      - kin40k_all
       - precipitation3d_all
+      - protein
   epochs:
     value: 200
   lr:
-    value: 0.001
+    values:
+      - 0.001
   lanc_iter:
     value: 100
   pre_size:
     value: 10
   grid_size:
     values:
-      - 50
       - 100
 program: experiments/train_skip.py
 command:
   - ${env}
   - ${interpreter}
   - ${program}
-  - --device=-1
   - ${args}

@@ -7,7 +7,7 @@ from pathlib import Path
 from timeit import default_timer as timer
 
 from bi_gp.bilateral_kernel import BilateralKernel
-from utils import set_seeds, prepare_dataset
+from utils import set_seeds, prepare_dataset, EarlyStopper
 
 
 class BilateralGPModel(gp.models.ExactGP):
@@ -105,6 +105,7 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
     mll = gp.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    stopper = EarlyStopper(patience=50)
 
     for i in tqdm(range(epochs)):
       train_dict = train(train_x, train_y, model, mll, optimizer,
@@ -115,20 +116,21 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
         val_dict = test(val_x, val_y, model, mll,
                         pre_size=pre_size, lanc_iter=lanc_iter,
                         label='val')
-        wandb.log(val_dict, step=i + 1)
 
         test_dict = test(test_x, test_y, model, mll,
                          pre_size=pre_size, lanc_iter=lanc_iter)
+
+        stopper(-val_dict['val/rmse'], dict(state_dict=model.state_dict(), step=i + 1))
+        wandb.log(val_dict, step=i + 1)
         wandb.log(test_dict, step=i + 1)
+        wandb.run.summary['val/best_step'] = stopper.info().get('step')
+        torch.save(stopper.info().get('state_dict'), Path(wandb.run.dir) / 'model.pt')
 
-        torch.save(model.state_dict(), Path(wandb.run.dir) / 'model.pt')
+        if stopper.is_done():
+          break
 
-    if (i % log_int) != 0:
-      test_dict = test(test_x, test_y, model, mll,
-                        pre_size=pre_size, lanc_iter=lanc_iter)
-      wandb.log(test_dict, step=i + 1)
-    
-    torch.save(model.state_dict(), Path(wandb.run.dir) / 'model.pt')
+    wandb.run.summary['val/best_step'] = stopper.info().get('step')
+    torch.save(stopper.info().get('state_dict'), Path(wandb.run.dir) / 'model.pt')
 
 
 if __name__ == "__main__":
