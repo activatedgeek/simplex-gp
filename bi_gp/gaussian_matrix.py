@@ -98,6 +98,6 @@ if __name__=="__main__":
     src_arr = torch.rand(80,2,dtype=torch.double,requires_grad=False) # Because of single precision
     #print("AAAA")
     #test = gradcheck(LatticeFilter.apply,(src,ref),eps=1e-3,rtol=5e-2,atol=1e-2)
-    test = gradcheck(LatticeFilter.apply,(src_arr,ref_arr),eps=1e-5,rtol=5e-4,atol=1e-5)
+    test = gradcheck(LatticeFilterGeneral.apply,(src_arr,ref_arr),eps=1e-5,rtol=5e-4,atol=1e-5)
     print(test) # Gradients are perhaps wrong still (need to implement double precision method)
     

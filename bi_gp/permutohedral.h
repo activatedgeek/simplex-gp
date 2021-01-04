@@ -212,7 +212,7 @@ float_type variance(at::Tensor coeffs){
     }
     float_type mean = mom1/mom0;
     float_type var = mom2/mom0-mean*mean;
-    printf("%.6f",var);
+    //printf("%.6f",var);
     return var;
 }
 
@@ -294,7 +294,7 @@ public:
         
         lattice.all_splat_ts = NANO_CAST(Clock::now() - start_ts).count();
 
-        std::cout << "Hash table filled " << lattice.hashTable.size() << std::endl;
+        //std::cout << "Hash table filled " << lattice.hashTable.size() << std::endl;
 
         // Blur
         start_ts = Clock::now();

@@ -57,8 +57,8 @@ from bi_gp.discretized_coefficients import get_coeffs
 #             return RectangularLazyBilateral(x1.div(self.lengthscale),x2.div(self.lengthscale))
 
 class SquareLazyLattice(LazyTensor):
-    def __init__(self,x,dkernel):
-        super().__init__(x)
+    def __init__(self,x,dkernel=None):
+        super().__init__(x,dkernel=dkernel)
         self.x = x
         self.dkernel=dkernel
 
@@ -72,8 +72,8 @@ class SquareLazyLattice(LazyTensor):
         return torch.ones_like(self.x[...,0])
 
 class RectangularLazyLattice(LazyTensor):
-    def __init__(self,xin,xout,dkernel):
-        super().__init__(xin, xout)
+    def __init__(self,xin,xout,dkernel=None):
+        super().__init__(xin, xout,dkernel=dkernel)
         self.xin = xin
         self.xout = xout
         self.dkernel=dkernel
@@ -98,13 +98,20 @@ class DiscretizedKernelFN(nn.Module):
         self._forward_coeffs = None
         self._deriv_coeffs = None
         self.order = order
+        self._forward_coeffs = get_coeffs(lambda d: self.kernel_fn(d**2),self.order)
+        print(f"Discretized kernel coeffs: {self._forward_coeffs}")
+        def gradkern(x):
+            with torch.autograd.enable_grad():
+                z = x**2+torch.zeros_like(x,requires_grad=True)
+                g = torch.autograd.grad(self.kernel_fn(z).sum(),z)[0]
+                #print('gshape',g.shape)
+            return g#torch.where(z.abs()>1e-5,z,z+1e-5)
+        #self._deriv_coeffs = get_coeffs((lambda x: torch.autograd.grad(self.kernel_fn(x),x)/x),self.order)
+        self._deriv_coeffs = get_coeffs(gradkern,self.order)
+        print(f"Discretized kernel deriv coeffs: {self._deriv_coeffs}")
     def get_coeffs(self):
-        if self._forward_coeffs is None:
-            self._forward_coeffs = get_coeffs(self.kernel_fn,self.order)
         return self._forward_coeffs
     def get_deriv_coeffs(self):
-        if self._deriv_coeffs is None:
-            self._deriv_coeffs = get_coeffs(lambda x: torch.autograd.grad(self.kernel_fn(x),x)[0].item()/x,self.order)
         return self._deriv_coeffs
 
 
@@ -112,11 +119,11 @@ class DiscretizedKernelFN(nn.Module):
 
 class LatticeAccelerated(Kernel):
     has_lengthscale=True
-    def __init__(self,kernel_fn,order=2):
+    def __init__(self,kernel_fn,*args,order=2,**kwargs):
         """ Wraps a stationary kernel with the permutohedral lattice acceleartion.
             Given kernel defined as a function of d=|x1-x2| which is differentiable,
             returns a Gpytorch kernel."""
-        super().__init__()
+        super().__init__(*args,**kwargs)
         self.dkernel_fn = DiscretizedKernelFN(kernel_fn,order)    
 
     def forward(self, x1, x2, diag=False, **params):#what are the extra kwargs for??
@@ -129,10 +136,11 @@ class LatticeAccelerated(Kernel):
         else:
             return RectangularLazyLattice(x1.div(self.lengthscale),x2.div(self.lengthscale),self.dkernel_fn)
 
-def rbf(d):
-    return torch.exp(-d**2)
+def rbf(d2):
+    return torch.exp(-d2)
 
-def matern(d,nu=.5):
+def matern(d2,nu=.5):
+    d  =d2.abs().sqrt()
     exp_component = torch.exp(-np.sqrt(nu * 2) * d)
     if nu == 0.5:
         constant_component = 1
@@ -144,11 +152,11 @@ def matern(d,nu=.5):
         raise NotImplementedError
     return constant_component * exp_component
 
-def RBFLattice():
-    return LatticeAccelerated(rbf,order=2)
+def RBFLattice(*args,**kwargs):
+    return LatticeAccelerated(rbf,*args,order=2,**kwargs)
 
-def BilateralKernel():
-    return RBFLattice()
+def BilateralKernel(*args,**kwargs):
+    return RBFLattice(*args,**kwargs)
 
-def MaternLattice(nu):
-    return LatticeAccelerated(partial(matern,nu=nu),order=3)
+def MaternLattice(*args,nu=.5,**kwargs,):
+    return LatticeAccelerated(partial(matern,nu=nu),*args,order=3,**kwargs)

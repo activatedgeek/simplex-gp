@@ -11,7 +11,6 @@ def get_coeffs(kernel_fn,order):
     N = 10**4
     x = np.linspace(-30,30,N)
     fn_values = kernel_fn(torch.from_numpy(x).float()).cpu().data.numpy()
-    
     w = 2*np.pi*np.fft.fftfreq(N,60/N)
     fft_values = np.absolute(np.fft.fft(fn_values)/(2*np.pi*np.sqrt(N)))
     
