@@ -1,22 +1,16 @@
-name: BiGP
+name: cubench
 # method: random
 method: grid
 parameters:
   dataset:
     values:
-      - elevators
+      - elevators_all
       - houseelectric
       - keggdirected
+      - kin40k_all
       - precipitation3d_all
-  epochs:
-    value: 200
-  lr:
-    value: 0.01
-  lanc_iter:
-    value: 100
-  pre_size:
-    value: 10
-program: experiments/train_bigp.py
+      - protein
+program: experiments/cuda_test.py
 command:
   - ${env}
   - ${interpreter}

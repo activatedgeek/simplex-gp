@@ -3,6 +3,8 @@ from pathlib import Path
 import torch
 from torch.utils.cpp_extension import load
 from timeit import default_timer as timer
+import wandb
+
 from utils import UCIDataset
 
 def test_cpu(src, ref, cdebug=False):
@@ -60,6 +62,13 @@ def main(dataset=None, n=1000, pd=10, vd=1, cdebug=True):
 
   print(f'N: {ref.size(0)}, pD: {ref.size(1)}')
 
+  wandb.init(config={
+    'dataset': dataset,
+    'N': n,
+    'pd': pd,
+    'vd': vd,
+  })
+
   res_cpu, ts_cpu = test_cpu(src, ref, cdebug=cdebug)
 
   print('-------------------------------')
@@ -72,17 +81,7 @@ def main(dataset=None, n=1000, pd=10, vd=1, cdebug=True):
   try:
     assert torch.allclose(res_cpu, res_gpu), 'Possible CPU/GPU mismatch!'
     print('Matched!')
-  except AssertionError as aexc:
-    rel_err = (res_cpu - res_gpu).norm(p=2) / res_cpu.norm(p=2)
-    abs_rel_err = (res_cpu - res_gpu).norm(p=1) / res_cpu.norm(p=1)
-
-    delta_mu = (res_cpu - res_gpu).abs().mean()
-    delta_std = (res_cpu - res_gpu).abs().std()
-
-    print(f'Rel. Err.: {rel_err}')
-    print(f'Abs. Rel. Err.: {abs_rel_err}')
-    print(f'Pointwise Abs. Err.: {delta_mu} +/- {delta_std}')
-    
+  except AssertionError as aexc:    
     # print('CPU Output:')
     # print(res_cpu)
     # print('GPU Output:')
@@ -91,9 +90,31 @@ def main(dataset=None, n=1000, pd=10, vd=1, cdebug=True):
     ## Relative errors may still be small enough to be ok.
     print(aexc)
 
+  rel_err = (res_cpu - res_gpu).norm(p=2) / res_cpu.norm(p=2)
+  rel_abs_err = (res_cpu - res_gpu).norm(p=1) / res_cpu.norm(p=1)
+
+  delta_mu = (res_cpu - res_gpu).abs().mean()
+  delta_std = (res_cpu - res_gpu).abs().std()
+
+  print(f'Rel. Err.: {rel_err}')
+  print(f'Abs. Rel. Err.: {rel_abs_err}')
+  print(f'Pointwise Abs. Err.: {delta_mu} +/- {delta_std}')
+
   print(f'Speedup: ~{ts_cpu / ts_gpu:.2f}x')
+
+  wandb.log({
+    'error/relative':  rel_err,
+    'error/relative_abs': rel_abs_err,
+    'error/pointwise': delta_mu,
+    'error/pointwise_std': delta_std,
+    'ts/cpu': ts_cpu,
+    'ts/gpu': ts_gpu,
+    'ts/speedup': ts_cpu / ts_gpu
+  })
 
 
 if __name__ == "__main__":
+  os.environ['WANDB_MODE'] = os.environ.get('WANDB_MODE', default='dryrun')
+
   from fire import Fire
   Fire(main)

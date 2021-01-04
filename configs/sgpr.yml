@@ -1,3 +1,4 @@
+name: SGPR
 # method: random
 method: grid
 parameters:
