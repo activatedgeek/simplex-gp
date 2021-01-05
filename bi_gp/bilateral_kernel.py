@@ -94,7 +94,7 @@ def rbf(d2):
 from torch.autograd import Function
 class Matern(Function):
     @staticmethod
-    def forward(ctx,d2,nu=1.5):
+    def forward(ctx,d2,nu):
         d  =d2.abs().sqrt()#(d2.abs()+1e-3).sqrt()
         exp_component = torch.exp(-np.sqrt(nu * 2) * d)
         if nu == 1.5:
@@ -117,7 +117,7 @@ class Matern(Function):
             polynomial = -(5/6)*(1+d*np.sqrt(5))
         else:
             raise NotImplementedError
-        return polynomial*exp,None
+        return grad_output*polynomial*exp,None
 
 def matern(d2,nu=.5):
     d  =d2.abs().sqrt()#(d2.abs()+1e-3).sqrt()
@@ -138,5 +138,5 @@ def RBFLattice(*args,**kwargs):
 def BilateralKernel(*args,**kwargs):
     return RBFLattice(*args,**kwargs)
 
-def MaternLattice(*args,nu=.5,**kwargs,):
-    return LatticeAccelerated(partial(Matern.apply,nu=nu),*args,order=3,**kwargs)
+def MaternLattice(*args,nu=1.5,**kwargs,):
+    return LatticeAccelerated(lambda d2: Matern.apply(d2,nu),*args,order=3,**kwargs)
