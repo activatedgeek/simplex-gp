@@ -200,6 +200,23 @@ float_type binomial_variance(int order){
     assert(order<6);
     return float_type(order) / 2.0f;
 }
+float_type variance(at::Tensor coeffs){
+    int k = coeffs.size(0);
+    auto coeffs_iter = coeffs.accessor<float_type,1>();
+    float_type mom0 = 0;
+    float_type mom1 = 0.;
+    float_type mom2 = 0.;
+    for (int i=0; i<k; ++i){
+        float_type c = coeffs_iter[i];
+        mom0 += c;
+        mom1 += i*c;
+        mom2 += i*i*c;
+    }
+    float_type mean = mom1/mom0;
+    float_type var = mom2/mom0-mean*mean;
+    //printf("%.6f",var);
+    return var;
+}
 
 // float_type binomial_coefficients_table[4][6] = {
 //     {1.0, 1.5565E-02, 5.8693E-08, 5.3618E-17, 1.1867E-29, 0.0000E+00},
@@ -239,23 +256,27 @@ public:
      *     out : output of filtering src by ref
      *                expected to have shape n x c
      */
-    static at::Tensor filter(at::Tensor src, at::Tensor ref, int order=1){
+    static at::Tensor filter(at::Tensor src, at::Tensor ref, at::Tensor coeffs){
         int n = src.size(0);
         int srcChannels = src.size(1);
         assert(n == ref.size(0));
         int refChannels = ref.size(1);
-
-        PermutohedralLattice lattice(refChannels, srcChannels, n, order);
+        //int k = coeffs.size(0);
+        
 
         // Splat into the lattice
         #ifdef DEBUG
         auto start_ts = Clock::now();
         #endif
 
-        float_type *arr_ref = new float_type[n * refChannels];
-        float_type *arr_src = new float_type[n * srcChannels];
+        PermutohedralLattice lattice(refChannels, srcChannels, n, coeffs);
+
+        float_type* arr_ref = new float_type[n * refChannels];
+        float_type* arr_src = new float_type[n * srcChannels];
+        // float_type* coeffs = new float_type[nk];
         auto ref_iter = ref.accessor<float_type, 2>();
         auto src_iter = src.accessor<float_type, 2>();
+        //auto coeffs_iter = coeffs.accessor<float_type,1>();
 
         for (int64_t i = 0; i < n; ++i){
             for (int64_t c = 0; c < refChannels; ++c){
@@ -267,41 +288,25 @@ public:
                 arr_src[i * srcChannels + c] = src_iter[i][c];
             }
         }
-
+        // for (int64_t i = 0; i < k; ++i){
+        //         coeffs_src[i] = coeffs_iter[i];
+        // }
         for (int i = 0; i < n; ++i){
             lattice.splat(arr_ref + i * refChannels, arr_src + i * srcChannels);
         }
-
+        
         #ifdef DEBUG
         auto elapsed_ts = NANO_CAST(Clock::now() - start_ts).count();
         std::cout << "Hash table size: " << lattice.hashTable.size() << std::endl;
         std::cout << "Splat: " << elapsed_ts << " ns" << std::endl;
         #endif
 
-        // // Old code
-        // float_type *col = new float_type[im.channels+1];
-        // col[im.channels] = 1; // homogeneous coordinate
-
-        // float_type *imPtr = im(0, 0, 0);
-        // float_type *refPtr = ref(0, 0, 0);
-        // for (int t = 0; t < im.frames; t++) {
-        //     for (int y = 0; y < im.height; y++) {
-        //         for (int x = 0; x < im.width; x++) {
-        //             for (int c = 0; c < im.channels; c++) {
-        //                 col[c] = *imPtr++;
-        //             }
-        //             lattice.splat(refPtr, col);
-        //             refPtr += ref.channels;
-        //         }
-        //     }
-        // }
-
         // Blur
         #ifdef DEBUG
         start_ts = Clock::now();
         #endif
 
-        lattice.blur(order);
+        lattice.blur(coeffs);
         
         #ifdef DEBUG
         elapsed_ts = NANO_CAST(Clock::now() - start_ts).count();
@@ -331,33 +336,6 @@ public:
         #endif
 
         at::Tensor output = torch::from_blob(outArray, {n, srcChannels}, arr_deleter).to(AT_FLOAT_TYPE);
-        // at::TensorAccessor<float_type, 2> fa = output.accessor<float_type, 2>();
-        //printf("%.6f",fa[0][0]);
-        // at::Tensor output = at::empty({n,srcChannels});
-        // auto out_iter = output.accessor<float_type,2>();
-        // for (int64_t i=0; i<n; ++i){
-        //     for (int64_t c=0; c<srcChannels;++c){
-        //         out_iter[i][c] = outArray[i+c*srcChannels];
-        //     }
-        // }
-        //delete [] outArray;
-        // delete[] outArray;
-        // Need to figure out how to fill out with outArray
-
-        // lattice.beginSlice();
-        // float_type *outPtr = out(0, 0, 0);
-        // for (int t = 0; t < im.frames; t++) {
-        //     for (int y = 0; y < im.height; y++) {
-        //         for (int x = 0; x < im.width; x++) {
-        //             lattice.slice(col);
-        //             float_type scale = 1.0f/col[im.channels];
-        //             for (int c = 0; c < im.channels; c++) {
-        //                 *outPtr++ = col[c]*scale;
-        //             }
-        //         }
-        //     }
-        // }
-
         return output;
     }
     /* Constructor
@@ -365,7 +343,7 @@ public:
             *        vd_ : dimensionality of value vectors
             * nData_ : number of points in the input
             */
-    PermutohedralLattice(int d_, int vd_, int nData_, int order) : d(d_), vd(vd_), nData(nData_), hashTable(d_, vd_)
+    PermutohedralLattice(int d_, int vd_, int nData_, at::Tensor coeffs) : d(d_), vd(vd_), nData(nData_), hashTable(d_, vd_)
     {
 
         // Allocate storage for various arrays
@@ -380,8 +358,6 @@ public:
         canonical = new short[(d + 1) * (d + 1)];
         key = new short[d + 1];
 
-        auto start_ts = Clock::now();
-        
         // compute the coordinates of the canonical simplex, in which
         // the difference between a contained point and the zero
         // remainder vertex is always in ascending order. (See pg.4 of paper.)
@@ -409,14 +385,14 @@ public:
                 *
                 * So we need to scale the space by (d+1)sqrt(2/3).
                 */
-            float_type sigma_blur = binomial_variance(order);
+            float_type sigma_blur = variance(coeffs);//binomial_variance(order);
             scaleFactor[i] *= (d + 1) * sqrtf(sigma_blur+1.0f/6.0f);//sqrtf(2.0 / 3);
         }
+
     }
 
     /* Performs splatting with given position and value vectors */
     void splat(float_type *position, float_type *value) {
-        auto start_ts = Clock::now();
 
         // first rotate position into the (d+1)-dimensional hyperplane
         elevated[d] = -d * position[d - 1] * scaleFactor[d - 1];
@@ -534,11 +510,9 @@ public:
     }
 
     /* Performs a Gaussian blur along each projected axis in the hyperplane. */
-    void blur(int order){
+    void blur(at::Tensor coeffs){
         // Prepare arrays
         short *neighbor = new short[d + 1];
-        short *neighbor1 = new short[d + 1];
-        short *neighbor2 = new short[d + 1];
         float_type *newValue = new float_type[vd * hashTable.size()];
         float_type *oldValue = hashTable.getValues();
         float_type *hashTableBase = oldValue;
@@ -547,7 +521,7 @@ public:
         float_type *zero = new float_type[vd];
         for (int k = 0; k < vd; k++)
             zero[k] = 0;
-
+        auto coeffs_accessor = coeffs.accessor<float_type,1>();
         // For each of d+1 axes,
         for (int j = 0; j <= d; j++){
             //printf(" %d", j);
@@ -558,10 +532,10 @@ public:
                                                                                                      
                 short *key = hashTable.getKeys() + i * (d); // keys to current vertex
 
-                //  // Init neighbor to (order) below value along given axis
                 float_type *newVal = newValue + i * vd;
                 for (int k = 0; k < vd; k++) newVal[k] = 0;
-
+                int k = coeffs.size(0);
+                int order = k/2;
                 for (int nid=-order; nid<=order; ++nid){
 
                     for (int k = 0; k < d; k++) neighbor[k] = key[k] - nid;
@@ -569,39 +543,11 @@ public:
 
                     float_type* val = hashTable.lookup(neighbor,false);
                     val = val?val-hashTableBase+oldValue:zero;
-                    float_type c = binomial_coefficients(order,nid);
+                    float_type c = coeffs_accessor[nid+order];
                     // printf("%.3f\n",c);
                     for (int k = 0; k < vd; k++) newVal[k] += c*val[k];
                 }
-                // for (int k = 0; k < d; k++){// shouldn't it be k<d+1?
-                //     neighbor1[k] = key[k] + 1;
-                //     neighbor2[k] = key[k] - 1;
-                // }
-                // neighbor1[j] = key[j] - d;
-                // neighbor2[j] = key[j] + d; // keys to the neighbors along the given axis.
-
-                // float_type *oldVal = oldValue + i * vd;
-                // float_type *newVal = newValue + i * vd;
-
-                // float_type *vm1, *vp1;
-
-                // vm1 = hashTable.lookup(neighbor1, false); // look up first neighbor
-                // if (vm1)
-                //     vm1 = vm1 - hashTableBase + oldValue;
-                // else
-                //     vm1 = zero;
-
-                // vp1 = hashTable.lookup(neighbor2, false); // look up second neighbor
-                // if (vp1)
-                //     vp1 = vp1 - hashTableBase + oldValue;
-                // else
-                //     vp1 = zero;
-
-                // // Mix values of the three vertices
-                // for (int k = 0; k < vd; k++)
-                //     newVal[k] = (0.5f * vm1[k] + 1.0f * oldVal[k] + 0.5f * vp1[k]); // factor of two from krahenbuhl's implementation
-            
-            }                                                                             // because the gaussians should not be normalized
+            }
 
             float_type *tmp = newValue;
             newValue = oldValue;
@@ -623,8 +569,6 @@ public:
 
         delete zero;
         delete neighbor;
-        delete neighbor1;
-        delete neighbor2;
     }
 
 private:
@@ -639,6 +583,7 @@ private:
         float_type weight;
     } * replay;
     int nReplay, nReplaySub;
+
 public:
     char *rank;
     short *greedy;
