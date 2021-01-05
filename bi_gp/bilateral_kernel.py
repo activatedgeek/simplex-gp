@@ -92,49 +92,45 @@ def rbf(d2):
 
 #TODO: Deal with Matern derivative at 0
 # from torch.autograd import Function
-# class Matern(Function):
-#     @staticmethod
-#     def forward(ctx,d2,nu=.5):
-#         d  =d2.abs().sqrt()#(d2.abs()+1e-3).sqrt()
-#         exp_component = torch.exp(-np.sqrt(nu * 2) * d)
-#         if nu == 0.5:
-#             constant_component = 1
-#         elif nu == 1.5:
-#             constant_component = (np.sqrt(3) * d).add(1)
-#         elif nu == 2.5:
-#             constant_component = (np.sqrt(5) * d).add(1).add(5.0 / 3.0 * d ** 2)
-#         else:
-#             raise NotImplementedError
-#         if any(ctx.needs_input_grad):
-#             ctx.nu=nu
-#             ctx.save_for_backward(exp_component)
-#         return constant_component * exp_component
-#     @staticmethod
-#     def backward(ctx,grad_output):
-#         if ctx.needs_input_grad[1]: raise NotImplementedError # Gradients wrt to nu are not currently supported
-#         exp = ctx.saved_tensors
-#         if ctx.nu == 0.5:
-#             g = 
-#         elif ctx.nu == 1.5:
-#             constant_component = (np.sqrt(3) * d).add(1)
-#         elif ctx.nu == 2.5:
-#             constant_component = (np.sqrt(5) * d).add(1).add(5.0 / 3.0 * d ** 2)
-#         else:
-#             raise NotImplementedError
-#         return grad_source, grad_reference,None
+class Matern(Function):
+    @staticmethod
+    def forward(ctx,d2,nu=1.5):
+        d  =d2.abs().sqrt()#(d2.abs()+1e-3).sqrt()
+        exp_component = torch.exp(-np.sqrt(nu * 2) * d)
+        if nu == 1.5:
+            polynomial = (np.sqrt(3) * d).add(1)
+        elif nu == 2.5:
+            polynomial = (np.sqrt(5) * d).add(1).add(5.0 / 3.0 * d ** 2)
+        else:
+            raise NotImplementedError
+        if any(ctx.needs_input_grad):
+            ctx.nu=nu
+            ctx.save_for_backward(d,exp_component)
+        return polynomial * exp_component
+    @staticmethod
+    def backward(ctx,grad_output):
+        if ctx.needs_input_grad[1]: raise NotImplementedError # Gradients wrt to nu are not currently supported
+        d,exp = ctx.saved_tensors
+        if ctx.nu == 1.5:
+            polynomial = -(3/2)
+        elif ctx.nu == 2.5:
+            polynomial = -(5/6)*(1+d*np.sqrt(5))
+        else:
+            raise NotImplementedError
+        return polynomial*exp,None
 
-def matern(d2,nu=.5):
-    d  =d2.abs().sqrt()#(d2.abs()+1e-3).sqrt()
-    exp_component = torch.exp(-np.sqrt(nu * 2) * d)
-    if nu == 0.5:
-        constant_component = 1
-    elif nu == 1.5:
-        constant_component = (np.sqrt(3) * d).add(1)
-    elif nu == 2.5:
-        constant_component = (np.sqrt(5) * d).add(1).add(5.0 / 3.0 * d ** 2)
-    else:
-        raise NotImplementedError
-    return constant_component * exp_component
+# def matern(d2,nu=.5):
+#     d  =d2.abs().sqrt()#(d2.abs()+1e-3).sqrt()
+#     exp_component = torch.exp(-np.sqrt(nu * 2) * d)
+#     if nu == 0.5:
+#         constant_component = 1
+#     elif nu == 1.5:
+#         constant_component = (np.sqrt(3) * d).add(1)
+#     elif nu == 2.5:
+#         constant_component = (np.sqrt(5) * d).add(1).add(5.0 / 3.0 * d ** 2)
+#     else:
+#         raise NotImplementedError
+#     return constant_component * exp_component
 
 def RBFLattice(*args,**kwargs):
     return LatticeAccelerated(rbf,*args,order=2,**kwargs)
@@ -143,4 +139,4 @@ def BilateralKernel(*args,**kwargs):
     return RBFLattice(*args,**kwargs)
 
 def MaternLattice(*args,nu=.5,**kwargs,):
-    return LatticeAccelerated(partial(matern,nu=nu),*args,order=3,**kwargs)
+    return LatticeAccelerated(partial(Matern.apply,nu=nu),*args,order=3,**kwargs)
