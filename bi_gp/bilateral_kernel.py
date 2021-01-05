@@ -12,50 +12,6 @@ from functools import partial
 from bi_gp.gaussian_matrix import LatticeFilterGeneral
 from bi_gp.discretized_coefficients import get_coeffs
 
-# class LazyBilateral(LazyTensor):
-#     def __init__(self,x):
-#         super().__init__(x)
-#         self.x = x
-
-#     def _matmul(self,V):
-#         return LatticeFilter.apply(V,self.x)
-#     def _size(self):
-#         return torch.Size((self.x.shape[-2],self.x.shape[-2]))
-#     def _transpose_nonbatch(self):
-#         return self
-#     def diag(self):
-#         return torch.ones_like(self.x[...,0])
-
-# class RectangularLazyBilateral(LazyTensor):
-#     def __init__(self,xin,xout):
-#         super().__init__(xin, xout)
-#         self.xin = xin
-#         self.xout = xout
-#     def _matmul(self,V):
-#         n = V.shape[-2]
-#         assert n==self.xout.shape[-2], f"mismatched shapes? {V.shape,self.xout.shape}"
-#         x_large = torch.cat([self.xout,self.xin],dim=-2)
-#         V_large = torch.zeros(*V.shape[:-2],x_large.shape[-2],V.shape[-1],device=V.device,dtype=V.dtype)
-#         V_large[...,:n,:] += V
-#         return LatticeFilter.apply(V_large,x_large)[...,n:,:]
-#     def _size(self):
-#         return torch.Size((*self.xin.shape[:-1],self.xout.shape[-2]))
-#     def _transpose_nonbatch(self):
-#         return RectangularLazyBilateral(self.xout,self.xin)
-
-# class BilateralKernel(Kernel):
-#     has_lengthscale = True
-
-#     def forward(self, x1, x2, diag=False, **params):#what are the extra kwargs for??
-#         if diag == True:
-#             assert False
-#             return torch.ones_like(x1[..., 0])
-
-#         if x1.shape == x2.shape and x1.eq(x2).all():
-#             return LazyBilateral(x1.div(self.lengthscale))
-#         else:
-#             return RectangularLazyBilateral(x1.div(self.lengthscale),x2.div(self.lengthscale))
-
 class SquareLazyLattice(LazyTensor):
     def __init__(self,x,dkernel=None):
         super().__init__(x,dkernel=dkernel)
@@ -112,9 +68,6 @@ class DiscretizedKernelFN(nn.Module):
     def get_deriv_coeffs(self):
         return self._deriv_coeffs
 
-
-
-
 class LatticeAccelerated(Kernel):
     has_lengthscale=True
     def __init__(self,kernel_fn,*args,order=2,**kwargs):
@@ -137,6 +90,7 @@ class LatticeAccelerated(Kernel):
 def rbf(d2):
     return torch.exp(-d2)
 
+#TODO: Deal with Matern derivative at 0
 # from torch.autograd import Function
 # class Matern(Function):
 #     @staticmethod
