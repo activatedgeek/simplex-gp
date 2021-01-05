@@ -12,6 +12,8 @@ using namespace std;
 typedef float float_type;
 typedef std::chrono::high_resolution_clock Clock;
 
+// #define DEBUG
+
 #define AT_FLOAT_TYPE torch::kFloat32
 #define NANO_CAST(d) std::chrono::duration_cast<std::chrono::nanoseconds>(d)
 
@@ -263,7 +265,9 @@ public:
         
 
         // Splat into the lattice
+        #ifdef DEBUG
         auto start_ts = Clock::now();
+        #endif
 
         PermutohedralLattice lattice(refChannels, srcChannels, n, coeffs);
 
@@ -291,20 +295,28 @@ public:
             lattice.splat(arr_ref + i * refChannels, arr_src + i * srcChannels);
         }
         
-        
-        lattice.all_splat_ts = NANO_CAST(Clock::now() - start_ts).count();
-
-        //std::cout << "Hash table filled " << lattice.hashTable.size() << std::endl;
+        #ifdef DEBUG
+        auto elapsed_ts = NANO_CAST(Clock::now() - start_ts).count();
+        std::cout << "Hash table size: " << lattice.hashTable.size() << std::endl;
+        std::cout << "Splat: " << elapsed_ts << " ns" << std::endl;
+        #endif
 
         // Blur
+        #ifdef DEBUG
         start_ts = Clock::now();
+        #endif
 
         lattice.blur(coeffs);
         
-        lattice.blur_ts = NANO_CAST(Clock::now() - start_ts).count();
+        #ifdef DEBUG
+        elapsed_ts = NANO_CAST(Clock::now() - start_ts).count();
+        std::cout << "Blur: " << elapsed_ts << " ns" << std::endl;
+        #endif
 
         // Slice from the lattice
+        #ifdef DEBUG
         start_ts = Clock::now();
+        #endif
 
         lattice.beginSlice();
         float_type *outArray = new float_type[n * srcChannels];
@@ -318,44 +330,12 @@ public:
         delete[] arr_ref;
         delete[] arr_src;
 
-        lattice.slice_ts = NANO_CAST(Clock::now() - start_ts).count();
+        #ifdef DEBUG
+        elapsed_ts = NANO_CAST(Clock::now() - start_ts).count();
+        std::cout << "Slice: " << elapsed_ts << " ns" << std::endl;
+        #endif
 
         at::Tensor output = torch::from_blob(outArray, {n, srcChannels}, arr_deleter).to(AT_FLOAT_TYPE);
-        // at::TensorAccessor<float_type, 2> fa = output.accessor<float_type, 2>();
-        //printf("%.6f",fa[0][0]);
-        // at::Tensor output = at::empty({n,srcChannels});
-        // auto out_iter = output.accessor<float_type,2>();
-        // for (int64_t i=0; i<n; ++i){
-        //     for (int64_t c=0; c<srcChannels;++c){
-        //         out_iter[i][c] = outArray[i+c*srcChannels];
-        //     }
-        // }
-        //delete [] outArray;
-        // delete[] outArray;
-        // Need to figure out how to fill out with outArray
-
-        // lattice.beginSlice();
-        // float_type *outPtr = out(0, 0, 0);
-        // for (int t = 0; t < im.frames; t++) {
-        //     for (int y = 0; y < im.height; y++) {
-        //         for (int x = 0; x < im.width; x++) {
-        //             lattice.slice(col);
-        //             float_type scale = 1.0f/col[im.channels];
-        //             for (int c = 0; c < im.channels; c++) {
-        //                 *outPtr++ = col[c]*scale;
-        //             }
-        //         }
-        //     }
-        // }
-
-        // size_t total = lattice.all_splat_ts + lattice.blur_ts + lattice.slice_ts;
-
-        // std::cout << "Init: " << lattice.init_ts << " ns\n";
-        // std::cout << "All Splat: " << lattice.all_splat_ts << " ns, " << (float_type(lattice.all_splat_ts) / total) << "\n";
-        // std::cout << "Avg Hashmap/Splat Ratio: " << lattice.avg_ratio_ts << "\n";
-        // std::cout << "Blur: " << lattice.blur_ts << " ns, " << (float_type(lattice.blur_ts) / total) << "\n";
-        // std::cout << "Slice: " << lattice.slice_ts << " ns, " << (float_type(lattice.slice_ts) / total) << "\n";
-
         return output;
     }
     /* Constructor
@@ -378,8 +358,6 @@ public:
         canonical = new short[(d + 1) * (d + 1)];
         key = new short[d + 1];
 
-        auto start_ts = Clock::now();
-        
         // compute the coordinates of the canonical simplex, in which
         // the difference between a contained point and the zero
         // remainder vertex is always in ascending order. (See pg.4 of paper.)
@@ -411,12 +389,10 @@ public:
             scaleFactor[i] *= (d + 1) * sqrtf(sigma_blur+1.0f/6.0f);//sqrtf(2.0 / 3);
         }
 
-        init_ts = NANO_CAST(Clock::now() - start_ts).count();
     }
 
     /* Performs splatting with given position and value vectors */
     void splat(float_type *position, float_type *value) {
-        auto start_ts = Clock::now();
 
         // first rotate position into the (d+1)-dimensional hyperplane
         elevated[d] = -d * position[d - 1] * scaleFactor[d - 1];
@@ -488,8 +464,6 @@ public:
         }
         barycentric[0] += 1.0f + barycentric[d + 1];
 
-        auto start_hash_ts = Clock::now();
-
         // Splat the value into each vertex of the simplex, with barycentric weights.
         for (int remainder = 0; remainder <= d; remainder++){
             // Compute the location of the lattice point explicitly (all but the last coordinate - it's redundant because they sum to zero)
@@ -509,14 +483,6 @@ public:
             replay[nReplay].weight = barycentric[remainder];
             nReplay++;
         }
-
-        auto end_ts = Clock::now();
-
-        auto splat_ts = NANO_CAST(end_ts - start_ts);
-        auto hash_ts = NANO_CAST(end_ts - start_hash_ts);
-
-        float_type ratio_ts = float_type(hash_ts.count()) / splat_ts.count();
-        avg_ratio_ts += float_type(ratio_ts - avg_ratio_ts) / nReplay;
     }
 
     // Prepare for slicing
@@ -547,8 +513,6 @@ public:
     void blur(at::Tensor coeffs){
         // Prepare arrays
         short *neighbor = new short[d + 1];
-        short *neighbor1 = new short[d + 1];
-        short *neighbor2 = new short[d + 1];
         float_type *newValue = new float_type[vd * hashTable.size()];
         float_type *oldValue = hashTable.getValues();
         float_type *hashTableBase = oldValue;
@@ -583,18 +547,6 @@ public:
                     // printf("%.3f\n",c);
                     for (int k = 0; k < vd; k++) newVal[k] += c*val[k];
                 }
-                // for (int nid=-order; nid<=order; ++nid){
-
-                //     for (int k = 0; k < d; k++) neighbor[k] = key[k] - nid;
-                //     neighbor[j] = key[j] + nid*d;
-
-                //     float_type* val = hashTable.lookup(neighbor,false);
-                //     val = val?val-hashTableBase+oldValue:zero;
-                //     float_type c = binomial_coefficients(order,nid);
-                //     // printf("%.3f\n",c);
-                //     for (int k = 0; k < vd; k++) newVal[k] += c*val[k];
-                // }
-            
             }
 
             float_type *tmp = newValue;
@@ -617,8 +569,6 @@ public:
 
         delete zero;
         delete neighbor;
-        delete neighbor1;
-        delete neighbor2;
     }
 
 private:
@@ -633,13 +583,6 @@ private:
         float_type weight;
     } * replay;
     int nReplay, nReplaySub;
-
-    // runtime bookkeeping
-    float_type avg_ratio_ts = 0.0f;
-    size_t init_ts;
-    size_t all_splat_ts;
-    size_t blur_ts;
-    size_t slice_ts;
 
 public:
     char *rank;
