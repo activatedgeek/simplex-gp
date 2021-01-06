@@ -10,7 +10,9 @@ parameters:
       - precipitation3d_all
       - protein
   epochs:
-    value: 200
+    value: 1000
+  p_epochs:
+    value: 100
   lr:
     values:
       - 0.01
@@ -21,7 +23,7 @@ parameters:
   nu:
     values:
       - 1.5
-      - 2.5
+      # - 2.5
 program: experiments/train_bigp.py
 command:
   - ${env}

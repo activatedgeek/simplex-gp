@@ -80,7 +80,7 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
 
 
 def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int = None, device: int = 0,
-         epochs: int = 100, lr: int = 1e-3, lanc_iter: int = 100, pre_size: int = 10,
+         epochs: int = 100, lr: int = 1e-3, p_epochs: int = 50, lanc_iter: int = 100, pre_size: int = 10,
          nu: float = None):
     set_seeds(seed)
     device = f"cuda:{device}" if (device >= 0 and torch.cuda.is_available()) else "cpu"
@@ -109,7 +109,7 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
     mll = gp.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    stopper = EarlyStopper(patience=50)
+    stopper = EarlyStopper(patience=p_epochs)
 
     for i in tqdm(range(epochs)):
       train_dict = train(train_x, train_y, model, mll, optimizer,
@@ -124,16 +124,19 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
         test_dict = test(test_x, test_y, model, mll,
                          pre_size=pre_size, lanc_iter=lanc_iter)
 
-        stopper(-val_dict['val/rmse'], dict(state_dict=model.state_dict(), step=i + 1))
+        stopper(-val_dict['val/rmse'], dict(
+          state_dict=model.state_dict(), rmse=test_dict['test/rmse'], step=i + 1))
         wandb.log(val_dict, step=i + 1)
         wandb.log(test_dict, step=i + 1)
         wandb.run.summary['val/best_step'] = stopper.info().get('step')
+        wandb.run.summary['test/best_rmse'] = stopper.info().get('rmse')
         torch.save(stopper.info().get('state_dict'), Path(wandb.run.dir) / 'model.pt')
 
         if stopper.is_done():
           break
 
     wandb.run.summary['val/best_step'] = stopper.info().get('step')
+    wandb.run.summary['test/best_rmse'] = stopper.info().get('rmse')
     torch.save(stopper.info().get('state_dict'), Path(wandb.run.dir) / 'model.pt')
 
 
