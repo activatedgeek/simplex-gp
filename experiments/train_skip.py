@@ -10,15 +10,17 @@ from utils import set_seeds, prepare_dataset, EarlyStopper
 
 
 class SKIPGPModel(gp.models.ExactGP):
-    def __init__(self, train_x, train_y, grid_size=100):
+    def __init__(self, train_x, train_y, grid_size=100, nu=None):
         likelihood = gp.likelihoods.GaussianLikelihood(
                       noise_constraint=gp.constraints.GreaterThan(1e-4))
         super().__init__(train_x, train_y, likelihood)
         self.mean_module = gp.means.ConstantMean()
+        self.base_covar_module = gp.kernels.MaternKernel(nu=nu) \
+          if nu is not None else gp.kernels.RBFKernel()
         self.covar_module = gp.kernels.ProductStructureKernel(
-            gp.kernels.ScaleKernel(
-                gp.kernels.GridInterpolationKernel(gp.kernels.RBFKernel(), grid_size=grid_size, num_dims=1)
-            ), num_dims=train_x.size(-1)
+          gp.kernels.ScaleKernel(
+            gp.kernels.GridInterpolationKernel(self.base_covar_module, grid_size=grid_size, num_dims=1)
+          ), num_dims=train_x.size(-1)
         )
 
     def forward(self, x):
@@ -84,7 +86,7 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
 
 def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int = None, device: int = 0,
          epochs: int = 100, lr: int = 1e-3, lanc_iter: int = 100, pre_size: int = 10,
-         grid_size: int = 100):
+         grid_size: int = 100, nu: float = None):
     set_seeds(seed)
     device = f"cuda:{device}" if (device >= 0 and torch.cuda.is_available()) else "cpu"
 
@@ -106,9 +108,10 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
       'N_train': train_x.size(0),
       'N_test': test_x.size(0),
       'N_val': val_x.size(0),
+      'nu': nu
     })
 
-    model = SKIPGPModel(train_x, train_y, grid_size=grid_size).to(device)
+    model = SKIPGPModel(train_x, train_y, grid_size=grid_size, nu=nu).to(device)
     mll = gp.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)

@@ -10,13 +10,14 @@ from utils import set_seeds, prepare_dataset, EarlyStopper
 
 
 class SGPRModel(gp.models.ExactGP):
-    def __init__(self, train_x, train_y, n_inducing=500):
+    def __init__(self, train_x, train_y, n_inducing=500, nu=None):
         likelihood = gp.likelihoods.GaussianLikelihood(
                       noise_constraint=gp.constraints.GreaterThan(1e-4))
         super().__init__(train_x, train_y, likelihood)
         self.mean_module = gp.means.ConstantMean()
-        self.base_covar_module = gp.kernels.ScaleKernel(gp.kernels.RBFKernel(ard_num_dims=train_x.size(-1)))
-        self.covar_module = gp.kernels.InducingPointKernel(self.base_covar_module,
+        self.base_covar_module = gp.kernels.MaternKernel(nu=nu, ard_num_dims=train_x.size(-1)) \
+          if nu is not None else gp.kernels.RBFKernel(ard_num_dims=train_x.size(-1))
+        self.covar_module = gp.kernels.InducingPointKernel(gp.kernels.ScaleKernel(self.base_covar_module),
           inducing_points=train_x[torch.randperm(train_x.size(0))[:n_inducing]], likelihood=likelihood)
 
     def forward(self, x):
@@ -80,7 +81,7 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
 
 def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int = None, device: int = 0,
          epochs: int = 100, lr: int = 1e-3, lanc_iter: int = 100, pre_size: int = 10,
-         n_inducing: int = 500):
+         n_inducing: int = 500, nu: float = None):
     set_seeds(seed)
     device = f"cuda:{device}" if (device >= 0 and torch.cuda.is_available()) else "cpu"
 
@@ -102,9 +103,10 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
       'N_train': train_x.size(0),
       'N_test': test_x.size(0),
       'N_val': val_x.size(0),
+      'nu': nu
     })
 
-    model = SGPRModel(train_x, train_y, n_inducing=n_inducing).to(device)
+    model = SGPRModel(train_x, train_y, n_inducing=n_inducing, nu=nu).to(device)
     mll = gp.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)

@@ -13,7 +13,7 @@ parameters:
     value: 200
   lr:
     values:
-      - 0.01
+      - 0.001
   lanc_iter:
     value: 100
   pre_size:
@@ -21,6 +21,10 @@ parameters:
   n_inducing:
     values:
       - 512
+  nu:
+    values:
+      - 1.5
+      - 2.5
 program: experiments/train_sgpr.py
 command:
   - ${env}

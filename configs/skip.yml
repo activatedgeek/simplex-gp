@@ -21,6 +21,10 @@ parameters:
   grid_size:
     values:
       - 100
+  nu:
+    values:
+      - 1.5
+      - 2.5
 program: experiments/train_skip.py
 command:
   - ${env}

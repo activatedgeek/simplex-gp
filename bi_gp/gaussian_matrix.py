@@ -17,9 +17,9 @@ if torch.cuda.is_available():
                     os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda.cpp'),
                     os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda_kernel.cu')]).filter
 
-cpulattice = load(name="lattice", verbose=True, sources=[
+cpulattice = load(name="cpu_lattice", verbose=True, sources=[
                     os.path.join(os.path.dirname(__file__), 'lattice.cpp')]).filter
-        
+
 class LatticeFilterGeneral(Function):
     @staticmethod
     def forward(ctx, source, reference,kernel_fn):
@@ -28,12 +28,15 @@ class LatticeFilterGeneral(Function):
         # Typical runtime of O(nd^2 + n*L), Worst case O(nd^2 + n*L*d)
         assert source.shape[0] == reference.shape[0], \
             "Incompatible shapes {}, and {}".format(source.shape,reference.shape)
+        coeffs = kernel_fn.get_coeffs().to(source.device)
         if any(ctx.needs_input_grad):
             ctx.save_for_backward(source,reference) # TODO: add batch compatibility
             ctx.gpu = source.is_cuda
             ctx.kernel_fn= kernel_fn
+            ctx.coeffs = coeffs
+            ctx.deriv_coeffs = ctx.kernel_fn.get_deriv_coeffs().to(source.device)
         filtermethod = gpulattice if source.is_cuda else cpulattice
-        filtered_output = filtermethod(source,reference.contiguous(),kernel_fn.get_coeffs())
+        filtered_output = filtermethod(source,reference.contiguous(),coeffs)
         return filtered_output
     @staticmethod
     def backward(ctx,grad_output):
@@ -47,7 +50,7 @@ class LatticeFilterGeneral(Function):
             d = ref.shape[-1]
             grad_source = grad_reference = None
             if ctx.needs_input_grad[0] and not ctx.needs_input_grad[1]:
-                grad_source = filtermethod(g,ref,ctx.kernel_fn.get_coeffs())#ctx.W@g#latticefilter(g,ref) # Matrix is symmetric
+                grad_source = filtermethod(g,ref,ctx.coeffs)#ctx.W@g#latticefilter(g,ref) # Matrix is symmetric
             if ctx.needs_input_grad[1]: # try torch.no_grad ()
                 s = []
                 s.append(time.time())
@@ -59,7 +62,7 @@ class LatticeFilterGeneral(Function):
                 #n x (L+Ld+L+Ld):   n x L       n x Ld     n x L   n x Ld 
                 all_ = torch.cat([g,grad_and_ref_flat,src,src_and_ref_flat],dim=-1)
                 s.append(time.time())
-                filtered_all = filtermethod(all_,ref,ctx.kernel_fn.get_deriv_coeffs())#ctx.W@all_#torch.randn_like(all_)#
+                filtered_all = filtermethod(all_,ref.contiguous(),ctx.deriv_coeffs)#ctx.W@all_#torch.randn_like(all_)#
                 s.append(time.time())
                 [wg,wgf,ws,wsf] = torch.split(filtered_all,[L,L*d,L,L*d],dim=-1)
                 s.append(time.time())

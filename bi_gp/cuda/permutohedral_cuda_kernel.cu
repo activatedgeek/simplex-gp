@@ -14,9 +14,8 @@ typedef std::chrono::high_resolution_clock Clock;
 
 #define NANO_CAST(d) std::chrono::duration_cast<std::chrono::nanoseconds>(d)
 #define BLOCK_SIZE 1024
-#define PTAccessor2D(T) at::PackedTensorAccessor32<T,2,at::RestrictPtrTraits>
-#define Accessor1Di(T) at::TensorAccessor<T,1,at::RestrictPtrTraits,int32_t>
-#define Ten2PTAccessor2D(T, x) x.packed_accessor32<T,2,at::RestrictPtrTraits>()
+#define PTAccessor(T,dim) at::PackedTensorAccessor32<T,dim,at::RestrictPtrTraits>
+#define Ten2PTAccessor(T,x,dim) x.packed_accessor32<T,dim,at::RestrictPtrTraits>()
 #define TenSize2D(m,n) {static_cast<int64_t>(m), static_cast<int64_t>(n)}
 #define TenOptType(T, D) torch::dtype(T).device(D.type(),D.index())
 
@@ -29,29 +28,6 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
       fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
       if (abort) exit(code);
    }
-}
-
-template<typename scalar_t>
-__device__ __forceinline__ scalar_t get_binom_coef(const size_t order, const int16_t k) {
-  // assert(order<6);
-
-  int binom_coef[6][6] = {
-    {1,0,0,0,0,0},
-    {2,1,0,0,0,0},
-    {6,4,1,0,0,0},
-    {20,15,6,1,0,0},
-    {70,56,28,8,1,0},
-    {252,210,120,45,10,1}
-  };
-
-  scalar_t norm = static_cast<scalar_t>(binom_coef[order][0]);
-  return static_cast<scalar_t>(binom_coef[order][k > 0 ? k : -k]) / norm;
-}
-
-template<typename scalar_t>
-inline scalar_t get_binom_var(size_t order) {
-  // assert(order<6);
-  return static_cast<scalar_t>(order) / 2.0;
 }
 
 template <typename scalar_t>
@@ -222,11 +198,11 @@ public:
 
 template <typename scalar_t>
 __global__ void splat_kernel(
-    const PTAccessor2D(scalar_t) ref,
-    PTAccessor2D(scalar_t) matE,
-    PTAccessor2D(int16_t) matY,
-    PTAccessor2D(int16_t) matR,
-    PTAccessor2D(scalar_t) matB,
+    const PTAccessor(scalar_t,2) ref,
+    PTAccessor(scalar_t,2) matE,
+    PTAccessor(int16_t,2) matY,
+    PTAccessor(int16_t,2) matR,
+    PTAccessor(scalar_t,2) matB,
     int16_t* matK,
     const scalar_t* scaleFactor,
     const int16_t* canonical,
@@ -353,7 +329,7 @@ __global__ void process_hashtable_kernel(
 
 template <typename scalar_t>
 __global__ void splat_value_kernel(
-    const PTAccessor2D(scalar_t) src,
+    const PTAccessor(scalar_t,2) src,
     HashTableGPU<scalar_t> table,
     ReplayEntry<scalar_t>* replay) {
   
@@ -378,7 +354,7 @@ template <typename scalar_t>
 __global__ void blur_kernel(
     HashTableGPU<scalar_t> table,
     const size_t ax,
-    const size_t order,
+    const PTAccessor(scalar_t,1) coeffs,
     int16_t* neighbors,
     const scalar_t* zero) {
   const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
@@ -399,8 +375,9 @@ __global__ void blur_kernel(
 
     const int16_t* key = table.getKey(nid);
     scalar_t* bufferVal = table.getBufferValue(nid);
+    const int16_t order = static_cast<int16_t>(coeffs.size(0) / 2);
 
-    for (int16_t o = -static_cast<int16_t>(order); o <= static_cast<int16_t>(order); ++o) {
+    for (int16_t o = -order; o <= order; ++o) {
       for (size_t p = 0; p < pd; ++p) {
         neighbor[p] = key[p] - o;
       }
@@ -408,10 +385,8 @@ __global__ void blur_kernel(
 
       int h = table.get(neighbor);
       const scalar_t* val = h >= 0 ? table.getValue(h) : zero;
-      scalar_t c = get_binom_coef<scalar_t>(order, o);
       for (size_t v = 0; v < vd; ++v) {
-        // gpuAtomicAdd(&bufferVal[v], c * val[v]);
-        bufferVal[v] += c * val[v];
+        bufferVal[v] += coeffs[o + order] * val[v];
       }
     }
   }
@@ -419,7 +394,7 @@ __global__ void blur_kernel(
 
 template <typename scalar_t>
 __global__ void slice_kernel(
-    PTAccessor2D(scalar_t) res,
+    PTAccessor(scalar_t,2) res,
     HashTableGPU<scalar_t> table,
     ReplayEntry<scalar_t>* replay) {
   const size_t n = blockIdx.x * blockDim.x + threadIdx.x;
@@ -452,10 +427,10 @@ private:
   HashTableGPU<scalar_t> hashTable;
   ReplayEntry<scalar_t>* replay;
 public:
-  PermutohedralLatticeGPU(uint16_t pd_, uint16_t vd_, size_t N_, const size_t o_): 
-    pd(pd_), vd(vd_), N(N_), order(o_), hashTable(HashTableGPU<scalar_t>(pd_, vd_, N_)) {
+  PermutohedralLatticeGPU(uint16_t pd_, uint16_t vd_, size_t N_, const scalar_t filter_var): 
+    pd(pd_), vd(vd_), N(N_), hashTable(HashTableGPU<scalar_t>(pd_, vd_, N_)) {
     
-    scalar_t invStdDev = (pd + 1) * sqrt(get_binom_var<scalar_t>(order) +  1.0f / 6);
+    scalar_t invStdDev = (pd + 1) * sqrt(filter_var +  static_cast<scalar_t>(1.0 / 6.0));
 
     gpuErrchk(cudaMallocManaged(&scaleFactor, pd * sizeof(scalar_t)));
     for (uint16_t i = 0; i < pd; ++i) {
@@ -494,9 +469,9 @@ public:
     const dim3 blocks((N + threads.x - 1) / threads.x);
 
     splat_kernel<scalar_t><<<blocks, threads>>>(
-      Ten2PTAccessor2D(scalar_t,ref),
-      Ten2PTAccessor2D(scalar_t,_matE), Ten2PTAccessor2D(int16_t,_matY),
-      Ten2PTAccessor2D(int16_t,_matR), Ten2PTAccessor2D(scalar_t,_matB),
+      Ten2PTAccessor(scalar_t,ref,2),
+      Ten2PTAccessor(scalar_t,_matE,2), Ten2PTAccessor(int16_t,_matY,2),
+      Ten2PTAccessor(int16_t,_matR,2), Ten2PTAccessor(scalar_t,_matB,2),
       _matK,
       scaleFactor, canonical,
       hashTable, replay);
@@ -506,14 +481,14 @@ public:
     gpuErrchk(cudaPeekAtLastError());
 
     splat_value_kernel<scalar_t><<<blocks,threads>>>(
-      Ten2PTAccessor2D(scalar_t,src),
+      Ten2PTAccessor(scalar_t,src,2),
       hashTable, replay);
     gpuErrchk(cudaPeekAtLastError());
 
     gpuErrchk(cudaFree(_matK));
   }
 
-  void blur() {
+  void blur(const Tensor coeffs) {
     int16_t* _matNeK;
     gpuErrchk(cudaMallocManaged(&_matNeK, N * (pd + 1) * sizeof(int16_t)));
 
@@ -528,7 +503,7 @@ public:
 
     for (size_t ax = 0; ax <= pd; ++ax) {
       blur_kernel<scalar_t><<<blocks, threads>>>(
-        hashTable, ax, order,
+        hashTable, ax, Ten2PTAccessor(scalar_t,coeffs,1),
         _matNeK, zero);
       gpuErrchk(cudaPeekAtLastError());
 
@@ -547,7 +522,7 @@ public:
     const dim3 blocks((N + threads.x - 1) / threads.x);
 
     slice_kernel<scalar_t><<<blocks, threads>>>(
-      Ten2PTAccessor2D(scalar_t,res),
+      Ten2PTAccessor(scalar_t,res,2),
       hashTable, replay);
     gpuErrchk(cudaPeekAtLastError());
 
@@ -555,7 +530,7 @@ public:
     return res;
   }
 
-  Tensor filter(Tensor src, Tensor ref) {
+  Tensor filter(Tensor src, Tensor ref, const Tensor coeffs) {
     #ifdef DEBUG
     auto start_ts = Clock::now();
     #endif
@@ -574,7 +549,7 @@ public:
     start_ts = Clock::now();
     #endif
 
-    blur();
+    blur(coeffs);
 
     #ifdef DEBUG
     elapsed_ts = NANO_CAST(Clock::now() - start_ts).count();
@@ -596,13 +571,34 @@ public:
   }
 };
 
-Tensor permutohedral_cuda_filter(Tensor src, Tensor ref, const size_t order) {
+template <typename scalar_t>
+scalar_t variance(Tensor coeffs){
+  auto coeffs_iter = coeffs.accessor<scalar_t,1>();
+
+  scalar_t mom0 = static_cast<scalar_t>(0.0);
+  scalar_t mom1 = static_cast<scalar_t>(0.0);
+  scalar_t mom2 = static_cast<scalar_t>(0.0);
+
+  int16_t k = static_cast<int16_t>(coeffs.size(0));
+  for (int16_t i = 0; i < k; ++i) {
+    scalar_t c = coeffs_iter[i];
+    mom0 += c;
+    mom1 += i * c;
+    mom2 += i * i * c;
+  }
+  scalar_t mean = mom1 / mom0;
+  scalar_t var = mom2 / mom0 - mean * mean;
+  return var;
+}
+
+Tensor permutohedral_cuda_filter(Tensor src, Tensor ref, const Tensor coeffs) {
   Tensor out;
 
   AT_DISPATCH_FLOATING_TYPES(src.scalar_type(), "permutohedral_lattice", ([&]{
+    const scalar_t filter_var = variance<scalar_t>(coeffs.to(torch::kCPU, false));
     PermutohedralLatticeGPU<scalar_t> lattice(ref.size(-1), src.size(-1),
-                                              src.size(0), order);
-    out = lattice.filter(src, ref);
+                                              src.size(0), filter_var);
+    out = lattice.filter(src, ref, coeffs);
   }));
 
   return out;

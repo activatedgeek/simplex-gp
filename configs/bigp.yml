@@ -18,6 +18,10 @@ parameters:
     value: 100
   pre_size:
     value: 10
+  nu:
+    values:
+      - 1.5
+      - 2.5
 program: experiments/train_bigp.py
 command:
   - ${env}

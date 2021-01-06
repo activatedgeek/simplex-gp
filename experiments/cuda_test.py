@@ -7,6 +7,9 @@ import wandb
 
 from utils import UCIDataset
 
+# coeffs = torch.Tensor([0.5, 1, 0.5])
+coeffs = torch.Tensor([0.0844, 0.2424, 0.6031, 1.0000, 0.6031, 0.2424, 0.0844])
+
 def test_cpu(src, ref, cdebug=False):
   root = Path(os.path.dirname(__file__)) / '..'
 
@@ -14,10 +17,10 @@ def test_cpu(src, ref, cdebug=False):
                      verbose=cdebug,
                      extra_cflags=['-DDEBUG'] if cdebug else None,
                      sources=[(root / 'bi_gp' / 'lattice.cpp')])
-  
+
   start = timer()
 
-  res = cpu_lattice.filter(src, ref, 1)
+  res = cpu_lattice.filter(src, ref, coeffs)
 
   ts = timer() - start
   return res, ts
@@ -42,7 +45,7 @@ def test_gpu(src, ref, cdebug=False):
 
   start = timer()
 
-  res = gpu_lattice.filter(src, ref, 1)
+  res = gpu_lattice.filter(src, ref, coeffs.to(device))
   
   ts = timer() - start
   return res, ts
