@@ -1,13 +1,13 @@
-name: SGPR
+name: SKIP-m9
 method: grid
 parameters:
   dataset:
     values:
-      - elevators_all
-      - keggdirected
-      - kin40k_all
+      # - elevators_all
+      # - keggdirected
+      # - kin40k_all
       - precipitation3d_all
-      - protein
+      # - protein
   epochs:
     value: 1000
   p_epochs:
@@ -21,13 +21,13 @@ parameters:
   pre_size:
     values:
       - 100
-  n_inducing:
+  grid_size:
     values:
-      - 800
+      - 9
   nu:
     values:
       - 1.5
-program: experiments/train_sgpr.py
+program: experiments/train_skip.py
 command:
   - ${env}
   - ${interpreter}

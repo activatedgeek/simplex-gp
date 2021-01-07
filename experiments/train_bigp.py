@@ -11,13 +11,13 @@ from utils import set_seeds, prepare_dataset, EarlyStopper
 
 
 class BilateralGPModel(gp.models.ExactGP):
-    def __init__(self, train_x, train_y, nu=None):
+    def __init__(self, train_x, train_y, nu=None, order=1):
         likelihood = gp.likelihoods.GaussianLikelihood(
                       noise_constraint=gp.constraints.GreaterThan(1e-4))
         super().__init__(train_x, train_y, likelihood)
         self.mean_module = gp.means.ConstantMean()
-        self.base_covar_module = MaternLattice(ard_num_dims=train_x.size(-1), nu=nu) \
-          if nu is not None else RBFLattice(ard_num_dims=train_x.size(-1))
+        self.base_covar_module = MaternLattice(ard_num_dims=train_x.size(-1), nu=nu, order=order) \
+          if nu is not None else RBFLattice(ard_num_dims=train_x.size(-1), order=order)
         self.covar_module = gp.kernels.ScaleKernel(self.base_covar_module)
 
     def forward(self, x):
@@ -80,7 +80,7 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
 
 def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int = None, device: int = 0,
          epochs: int = 1000, lr: int = 1e-3, p_epochs: int = 200, lanc_iter: int = 100, pre_size: int = 100,
-         nu: float = None):
+         nu: float = None, order: int = 1):
     wandb.init(config={
       'method': 'BiGP',
       'dataset': dataset,
@@ -107,7 +107,7 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
       'N_val': val_x.size(0)
     })
 
-    model = BilateralGPModel(train_x, train_y, nu=nu).to(device)
+    model = BilateralGPModel(train_x, train_y, nu=nu, order=order).to(device)
     mll = gp.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)

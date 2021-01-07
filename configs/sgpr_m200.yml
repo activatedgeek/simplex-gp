@@ -1,13 +1,14 @@
-name: SGPR
+name: SGPR-m200
 method: grid
 parameters:
   dataset:
     values:
-      - elevators_all
-      - keggdirected
-      - kin40k_all
-      - precipitation3d_all
-      - protein
+      # - elevators_all
+      - houseelectric
+      # - keggdirected
+      # - kin40k_all
+      # - precipitation3d_all
+      # - protein
   epochs:
     value: 1000
   p_epochs:
@@ -23,7 +24,7 @@ parameters:
       - 100
   n_inducing:
     values:
-      - 800
+      - 200
   nu:
     values:
       - 1.5

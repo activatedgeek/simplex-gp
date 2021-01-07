@@ -4,29 +4,29 @@ parameters:
   dataset:
     values:
       - elevators_all
-      - houseelectric
       - keggdirected
       - kin40k_all
-      - precipitation3d_all
+      # - precipitation3d_all
       - protein
   epochs:
     value: 1000
   p_epochs:
-    value: 100
+    value: 200
   lr:
     values:
-      - 0.001
+      - 0.1
   lanc_iter:
-    value: 100
-  pre_size:
-    value: 10
-  grid_size:
     values:
       - 100
+  pre_size:
+    values:
+      - 100
+  grid_size:
+    values:
+      - 10
   nu:
     values:
       - 1.5
-      # - 2.5
 program: experiments/train_skip.py
 command:
   - ${env}
