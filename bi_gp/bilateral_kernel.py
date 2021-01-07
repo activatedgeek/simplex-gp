@@ -132,11 +132,11 @@ def matern(d2,nu=.5):
         raise NotImplementedError
     return constant_component * exp_component
 
-def RBFLattice(*args,**kwargs):
-    return LatticeAccelerated(rbf,*args,order=2,**kwargs)
+def RBFLattice(*args,order=2,**kwargs):
+    return LatticeAccelerated(rbf,*args,order=order,**kwargs)
 
 def BilateralKernel(*args,**kwargs):
     return RBFLattice(*args,**kwargs)
 
-def MaternLattice(*args,nu=1.5,**kwargs,):
-    return LatticeAccelerated(lambda d2: Matern.apply(d2,nu),*args,order=3,**kwargs)
+def MaternLattice(*args,nu=1.5,order=3,**kwargs,):
+    return LatticeAccelerated(lambda d2: Matern.apply(d2,nu),*args,order=order,**kwargs)

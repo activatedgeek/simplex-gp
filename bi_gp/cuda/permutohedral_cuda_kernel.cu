@@ -51,7 +51,9 @@ private:
   uint8_t* uqentry;
 public:
   size_t N, pd, vd, capacity;
+  #ifdef DEBUG
   int64_t* M; // for actual size after splat.
+  #endif
 
   HashTableGPU(size_t pd_, size_t vd_, size_t N_): 
     pd(pd_), vd(vd_), N(N_) {
@@ -73,8 +75,10 @@ public:
       uqentry[i] = static_cast<uint8_t>(0);
     }
 
+    #ifdef DEBUG
     gpuErrchk(cudaMallocManaged(&M, sizeof(int64_t)));
     *M = static_cast<int64_t>(0);
+    #endif
   }
 
   /**
@@ -303,10 +307,9 @@ __global__ void process_hashtable_kernel(
     return;
   }
   const size_t pd = table.pd;
-
+  // const size_t r = blockIdx.y;
   int* entries = table.getEntries();
   uint8_t* uqentries = table.getUqEntries();
-  int64_t subcount = 0;
   
   for (size_t r = 0; r <= pd; ++r) {
     const size_t nid = n * (pd + 1) + r;
@@ -317,14 +320,14 @@ __global__ void process_hashtable_kernel(
       // Every element not re-assigned is unique.
       if (entries[nid] == entries[h]) {
         uqentries[nid] = static_cast<uint8_t>(1);
-        subcount++;
+        #ifdef DEBUG
+        gpuAtomicAdd(table.M, static_cast<int64_t>(1));
+        #endif
       }
 
       entries[nid] = entries[h];
     }
   }
-
-  gpuAtomicAdd(table.M, subcount);
 }
 
 template <typename scalar_t>
@@ -339,6 +342,7 @@ __global__ void splat_value_kernel(
   }
   const size_t pd = table.pd;
   const size_t vd = src.size(1);
+  // const size_t r = blockIdx.y;
   auto value = src[n];
   
   for (size_t r = 0; r <= pd; ++r) {
@@ -477,6 +481,8 @@ public:
       hashTable, replay);
     gpuErrchk(cudaPeekAtLastError());
 
+    // const dim3 proc_blocks((N + threads.x - 1) / threads.x, pd + 1);
+
     process_hashtable_kernel<scalar_t><<<blocks,threads>>>(hashTable);
     gpuErrchk(cudaPeekAtLastError());
 
@@ -595,7 +601,8 @@ Tensor permutohedral_cuda_filter(Tensor src, Tensor ref, const Tensor coeffs) {
   Tensor out;
 
   AT_DISPATCH_FLOATING_TYPES(src.scalar_type(), "permutohedral_lattice", ([&]{
-    const scalar_t filter_var = variance<scalar_t>(coeffs.to(torch::kCPU, false));
+    const Tensor cpu_coeffs = coeffs.to(torch::kCPU, false);
+    const scalar_t filter_var = variance<scalar_t>(cpu_coeffs);
     PermutohedralLatticeGPU<scalar_t> lattice(ref.size(-1), src.size(-1),
                                               src.size(0), filter_var);
     out = lattice.filter(src, ref, coeffs);

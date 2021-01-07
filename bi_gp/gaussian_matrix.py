@@ -4,25 +4,32 @@ from torch.utils.cpp_extension import load
 import os
 from torch.autograd import Function
 import torch.nn.functional as F
-import time
 import numpy as np
-import concurrent.futures
-import torch.multiprocessing as mp
 import math
 import gpytorch
-#import multiprocessing as mp
-
-if torch.cuda.is_available():
-    gpulattice = load(name="gpu_lattice", verbose=True, sources=[
-                    os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda.cpp'),
-                    os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda_kernel.cu')]).filter
-
-cpulattice = load(name="cpu_lattice", verbose=True, sources=[
-                    os.path.join(os.path.dirname(__file__), 'lattice.cpp')]).filter
 
 class LatticeFilterGeneral(Function):
+    method = None
+
+    @staticmethod
+    def lazy_compile(is_cuda):
+        if is_cuda:
+            LatticeFilterGeneral.method = load(name="gpu_lattice", verbose=True,
+                sources=[
+                    os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda.cpp'),
+                    os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda_kernel.cu')
+                ]).filter
+        else:
+            LatticeFilterGeneral.method = load(name="cpu_lattice", verbose=True,
+                sources=[
+                    os.path.join(os.path.dirname(__file__), 'lattice.cpp')
+                ]).filter
+        
     @staticmethod
     def forward(ctx, source, reference,kernel_fn):
+        if LatticeFilterGeneral.method is None:
+            LatticeFilterGeneral.lazy_compile(source.is_cuda)
+
         #W = torch.exp(-((reference[None,:,:] - reference[:,None,:])**2).sum(-1)).double()
         #ctx.W = W
         # Typical runtime of O(nd^2 + n*L), Worst case O(nd^2 + n*L*d)
@@ -31,18 +38,21 @@ class LatticeFilterGeneral(Function):
         coeffs = kernel_fn.get_coeffs().to(source.device)
         if any(ctx.needs_input_grad):
             ctx.save_for_backward(source,reference) # TODO: add batch compatibility
-            ctx.gpu = source.is_cuda
+            # ctx.gpu = source.is_cuda
             ctx.kernel_fn= kernel_fn
             ctx.coeffs = coeffs
             ctx.deriv_coeffs = ctx.kernel_fn.get_deriv_coeffs().to(source.device)
-        filtermethod = gpulattice if source.is_cuda else cpulattice
+        # filtermethod = gpulattice if source.is_cuda else cpulattice
+        filtermethod = LatticeFilterGeneral.method
         filtered_output = filtermethod(source,reference.contiguous(),coeffs)
         return filtered_output
     @staticmethod
     def backward(ctx,grad_output):
+        assert LatticeFilterGeneral.method is not None
         # Typical runtime of O(nd^2 + 2L*n*d), Worst case  O(nd^2 + 2L*n*d^2)
         # Does not support second order autograd at the moment
-        filtermethod = gpulattice if ctx.gpu else cpulattice
+        # filtermethod = gpulattice if ctx.gpu else cpulattice
+        filtermethod = LatticeFilterGeneral.method
         with torch.no_grad():
             src, ref = ctx.saved_tensors
             g = grad_output
@@ -52,26 +62,17 @@ class LatticeFilterGeneral(Function):
             if ctx.needs_input_grad[0] and not ctx.needs_input_grad[1]:
                 grad_source = filtermethod(g,ref,ctx.coeffs)#ctx.W@g#latticefilter(g,ref) # Matrix is symmetric
             if ctx.needs_input_grad[1]: # try torch.no_grad ()
-                s = []
-                s.append(time.time())
                 gf = grad_and_ref = grad_output[...,None]*ref[...,None,:] # n x L x d
                 grad_and_ref_flat = grad_and_ref.view(grad_and_ref.shape[:-2]+(L*d,))
                 sf = src_and_ref = src[...,None]*ref[...,None,:] # n x L x d
                 src_and_ref_flat = src_and_ref.view(src_and_ref.shape[:-2]+(L*d,))
-                s.append(time.time())
                 #n x (L+Ld+L+Ld):   n x L       n x Ld     n x L   n x Ld 
                 all_ = torch.cat([g,grad_and_ref_flat,src,src_and_ref_flat],dim=-1)
-                s.append(time.time())
                 filtered_all = filtermethod(all_,ref.contiguous(),ctx.deriv_coeffs)#ctx.W@all_#torch.randn_like(all_)#
-                s.append(time.time())
                 [wg,wgf,ws,wsf] = torch.split(filtered_all,[L,L*d,L,L*d],dim=-1)
-                s.append(time.time())
                 # has shape n x d 
                 grad_reference = -2*(sf*wg[...,None] - src[...,None]*wgf.view(-1,L,d) + gf*ws[...,None] - g[...,None]*wsf.view(-1,L,d)).sum(-2) # sum over L dimension
                 if ctx.needs_input_grad[0]: grad_source = wg
-                s.append(time.time())
-                s = np.array(s)
-            #print(f"{s[1:]-s[:-1]}")
         return grad_source, grad_reference,None
 
 

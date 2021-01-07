@@ -1,5 +1,6 @@
 import os
 import torch
+import numpy as np
 import gpytorch as gp
 from tqdm.auto import tqdm
 import wandb
@@ -35,8 +36,8 @@ def train(x, y, model, mll, optim, lanc_iter=100):
   optim.zero_grad()
 
   with gp.settings.max_root_decomposition_size(lanc_iter), \
-       gp.settings.cg_tolerance(1.0), \
-       gp.settings.use_toeplitz(False):
+       gp.settings.use_toeplitz(False), \
+       gp.settings.cg_tolerance(1.0):
     t_start = timer()
     
     output = model(x)
@@ -77,6 +78,8 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
       rmse = (pred_y.mean - y).pow(2).mean(0).sqrt()
       mae = (pred_y.mean - y).abs().mean(0)
 
+  torch.cuda.empty_cache()
+
   return {
     f'{label}/rmse': rmse.item(),
     f'{label}/mae': mae.item(),
@@ -85,8 +88,17 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
 
 
 def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int = None, device: int = 0,
-         epochs: int = 100, lr: int = 1e-3, p_epochs: int = 50, lanc_iter: int = 100, pre_size: int = 10,
-         grid_size: int = 100, nu: float = None):
+         epochs: int = 1000, lr: int = 1e-3, p_epochs: int = 200, lanc_iter: int = 100, pre_size: int = 100,
+         grid_size: int = None, total_grid_size: int = 100, nu: float = None):
+    wandb.init(config={
+      'method': 'SKIP',
+      'dataset': dataset,
+      'lr': lr,
+      'lanc_iter': lanc_iter,
+      'pre_size': pre_size,
+      'nu': nu
+    })
+    
     set_seeds(seed)
     device = f"cuda:{device}" if (device >= 0 and torch.cuda.is_available()) else "cpu"
 
@@ -95,20 +107,17 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
     _, val_x, val_y = next(data_iter)
     _, test_x, test_y = next(data_iter)
 
-    print(f'"{dataset}": D = {train_x.size(-1)}, Train N = {train_x.size(0)}, Val N = {val_x.size(0)} Test N = {test_x.size(0)}')
+    if grid_size is None:
+      grid_size = total_grid_size // train_x.size(-1)
 
-    wandb.init(config={
-      'method': 'SKIP',
-      'dataset': dataset,
-      'lr': lr,
-      'lanc_iter': lanc_iter,
-      'pre_size': pre_size,
+    print(f'"{dataset}": grid_size={grid_size}; D = {train_x.size(-1)}, Train N = {train_x.size(0)}, Val N = {val_x.size(0)} Test N = {test_x.size(0)}')
+
+    wandb.config.update({
       'grid_size': grid_size,
       'D': train_x.size(-1),
       'N_train': train_x.size(0),
       'N_test': test_x.size(0),
-      'N_val': val_x.size(0),
-      'nu': nu
+      'N_val': val_x.size(0)
     })
 
     model = SKIPGPModel(train_x, train_y, grid_size=grid_size, nu=nu).to(device)
@@ -118,8 +127,9 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
     stopper = EarlyStopper(patience=p_epochs)
 
     for i in tqdm(range(epochs)):
-      train_dict = train(train_x, train_y, model, mll, optimizer,
-                         lanc_iter=lanc_iter)
+      with gp.settings.use_toeplitz(True):
+        train_dict = train(train_x, train_y, model, mll, optimizer,
+                           lanc_iter=lanc_iter)
       wandb.log(train_dict, step=i + 1)
       
       if (i % log_int) == 0:

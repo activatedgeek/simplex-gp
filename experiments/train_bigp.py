@@ -31,8 +31,7 @@ def train(x, y, model, mll, optim, lanc_iter=100):
 
   optim.zero_grad()
 
-  with gp.settings.max_root_decomposition_size(lanc_iter), \
-       gp.settings.cg_tolerance(1.0):
+  with gp.settings.cg_tolerance(1.0):
     t_start = timer()
     
     output = model(x)
@@ -80,8 +79,17 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
 
 
 def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int = None, device: int = 0,
-         epochs: int = 100, lr: int = 1e-3, p_epochs: int = 50, lanc_iter: int = 100, pre_size: int = 10,
+         epochs: int = 1000, lr: int = 1e-3, p_epochs: int = 200, lanc_iter: int = 100, pre_size: int = 100,
          nu: float = None):
+    wandb.init(config={
+      'method': 'BiGP',
+      'dataset': dataset,
+      'lr': lr,
+      'lanc_iter': lanc_iter,
+      'pre_size': pre_size,
+      'nu': nu
+    })
+    
     set_seeds(seed)
     device = f"cuda:{device}" if (device >= 0 and torch.cuda.is_available()) else "cpu"
 
@@ -92,17 +100,11 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
 
     print(f'"{dataset}": D = {train_x.size(-1)}, Train N = {train_x.size(0)}, Val N = {val_x.size(0)} Test N = {test_x.size(0)}')
 
-    wandb.init(config={
-      'method': 'BiGP',
-      'dataset': dataset,
-      'lr': lr,
-      'lanc_iter': lanc_iter,
-      'pre_size': pre_size,
+    wandb.config.update({
       'D': train_x.size(-1),
       'N_train': train_x.size(0),
       'N_test': test_x.size(0),
-      'N_val': val_x.size(0),
-      'nu': nu
+      'N_val': val_x.size(0)
     })
 
     model = BilateralGPModel(train_x, train_y, nu=nu).to(device)
