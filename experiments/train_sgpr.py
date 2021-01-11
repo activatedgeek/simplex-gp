@@ -10,9 +10,9 @@ from utils import set_seeds, prepare_dataset, EarlyStopper
 
 
 class SGPRModel(gp.models.ExactGP):
-    def __init__(self, train_x, train_y, n_inducing=500, nu=None):
+    def __init__(self, train_x, train_y, n_inducing=500, nu=None, min_noise=1e-4):
         likelihood = gp.likelihoods.GaussianLikelihood(
-                      noise_constraint=gp.constraints.GreaterThan(1e-4))
+                      noise_constraint=gp.constraints.GreaterThan(min_noise))
         super().__init__(train_x, train_y, likelihood)
         self.mean_module = gp.means.ConstantMean()
         self.base_covar_module = gp.kernels.MaternKernel(nu=nu, ard_num_dims=train_x.size(-1)) \
@@ -47,7 +47,7 @@ def train(x, y, model, mll, optim, lanc_iter=100):
     bw_ts = timer() - t_start
 
   return {
-    'train/ll': -loss.detach().item(),
+    'train/mll': -loss.detach().item(),
     'train/loss_ts': loss_ts,
     'train/bw_ts': bw_ts,
     'train/total_ts': loss_ts + bw_ts
@@ -70,17 +70,20 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
 
       rmse = (pred_y.mean - y).pow(2).mean(0).sqrt()
       mae = (pred_y.mean - y).abs().mean(0)
+      nll = - torch.distributions.Normal(pred_y.mean,
+        pred_y.variance.add(model.likelihood.noise).sqrt()).log_prob(y).mean()
 
   return {
     f'{label}/rmse': rmse.item(),
     f'{label}/mae': mae.item(),
-    f'{label}/pred_ts': pred_ts
+    f'{label}/pred_ts': pred_ts,
+    f'{label}/nll': nll.item()
   }
 
 
 def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int = None, device: int = 0,
          epochs: int = 1000, lr: int = 1e-3, p_epochs: int = 200, lanc_iter: int = 100, pre_size: int = 100,
-         n_inducing: int = 500, nu: float = None):
+         n_inducing: int = 500, nu: float = None, min_noise: float = 1e-4):
     wandb.init(config={
       'method': 'SGPR',
       'dataset': dataset,
@@ -108,7 +111,7 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
       'N_val': val_x.size(0)
     })
 
-    model = SGPRModel(train_x, train_y, n_inducing=n_inducing, nu=nu).to(device)
+    model = SGPRModel(train_x, train_y, n_inducing=n_inducing, nu=nu, min_noise=min_noise).to(device)
     mll = gp.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)

@@ -70,11 +70,15 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
 
       rmse = (pred_y.mean - y).pow(2).mean(0).sqrt()
       mae = (pred_y.mean - y).abs().mean(0)
+      ## FIXME: diag assertion error for variance.
+      # nll = - torch.distributions.Normal(pred_y.mean,
+      #   pred_y.variance.add(model.likelihood.noise).sqrt()).log_prob(y).mean()
 
   return {
     f'{label}/rmse': rmse.item(),
     f'{label}/mae': mae.item(),
-    f'{label}/pred_ts': pred_ts
+    f'{label}/pred_ts': pred_ts,
+    # f'{label}/nll': nll.item()
   }
 
 
