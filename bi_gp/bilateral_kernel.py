@@ -79,7 +79,7 @@ class LatticeAccelerated(Kernel):
 
     def forward(self, x1, x2, diag=False, **params):#what are the extra kwargs for??
         if diag == True:
-            assert False
+            # assert False
             return torch.ones_like(x1[..., 0])
 
         if x1.shape == x2.shape and x1.eq(x2).all():

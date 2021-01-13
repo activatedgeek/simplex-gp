@@ -7,8 +7,8 @@ import wandb
 
 from utils import UCIDataset
 
-# coeffs = torch.Tensor([0.5, 1, 0.5])
-coeffs = torch.Tensor([0.0844, 0.2424, 0.6031, 1.0000, 0.6031, 0.2424, 0.0844])
+coeffs = torch.Tensor([0.5, 1, 0.5])
+# coeffs = torch.Tensor([0.0844, 0.2424, 0.6031, 1.0000, 0.6031, 0.2424, 0.0844])
 
 def test_cpu(src, ref, cdebug=False):
   root = Path(os.path.dirname(__file__)) / '..'

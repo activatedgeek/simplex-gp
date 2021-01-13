@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <assert.h>
 #include <cmath>
 #include <cstdio>
@@ -504,10 +505,17 @@ public:
       zero[d] = static_cast<scalar_t>(0.0);
     }
 
+    std::vector<size_t> dims;
+    for (size_t d = 0; d <= pd; ++d) {
+      dims.push_back(d);
+    }
+    /** TODO: **/
+    // std::random_shuffle(dims.begin(), dims.end());
+
     const dim3 threads(BLOCK_SIZE);
     const dim3 blocks((N + threads.x - 1) / threads.x);
 
-    for (size_t ax = 0; ax <= pd; ++ax) {
+    for (size_t ax: dims) {
       blur_kernel<scalar_t><<<blocks, threads>>>(
         hashTable, ax, Ten2PTAccessor(scalar_t,coeffs,1),
         _matNeK, zero);
