@@ -11,7 +11,7 @@ import wandb
 
 
 def set_seeds(seed=None):
-  if seed:
+  if seed is not None and seed >= 0:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
