@@ -1,11 +1,11 @@
-name: SKIP
+name: skip-m10
 method: grid
 parameters:
   dataset:
     values:
       - elevators_all
+      # - houseelectric
       - keggdirected
-      - kin40k_all
       # - precipitation3d_all
       - protein
   epochs:
@@ -27,6 +27,11 @@ parameters:
   nu:
     values:
       - 1.5
+  seed:
+    values:
+      - -1
+      - -2
+      - -3
 program: experiments/train_skip.py
 command:
   - ${env}

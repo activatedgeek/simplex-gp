@@ -1,14 +1,13 @@
-name: SGPR-m200
+name: sgpr-m200
 method: grid
 parameters:
   dataset:
     values:
-      # - elevators_all
+      - elevators_all
       - houseelectric
-      # - keggdirected
-      # - kin40k_all
-      # - precipitation3d_all
-      # - protein
+      - keggdirected
+      - precipitation3d_all
+      - protein
   epochs:
     value: 1000
   p_epochs:
@@ -28,6 +27,14 @@ parameters:
   nu:
     values:
       - 1.5
+  min_noise:
+    values:
+      - 1e-4
+  seed:
+    values:
+      - -1
+      - -2
+      - -3
 program: experiments/train_sgpr.py
 command:
   - ${env}

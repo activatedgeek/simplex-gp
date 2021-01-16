@@ -1,11 +1,11 @@
-name: SGPR
+name: sgpr-m512
 method: grid
 parameters:
   dataset:
     values:
       - elevators_all
+      # - houseelectric
       - keggdirected
-      - kin40k_all
       - precipitation3d_all
       - protein
   epochs:
@@ -23,10 +23,15 @@ parameters:
       - 100
   n_inducing:
     values:
-      - 800
+      - 512
   nu:
     values:
       - 1.5
+  seed:
+    values:
+      - -1
+      - -2
+      - -3
 program: experiments/train_sgpr.py
 command:
   - ${env}
