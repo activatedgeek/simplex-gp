@@ -31,7 +31,8 @@ def train(x, y, model, mll, optim, lanc_iter=100):
 
   optim.zero_grad()
 
-  with gp.settings.cg_tolerance(1.0):
+  with gp.settings.max_root_decomposition_size(lanc_iter), \
+       gp.settings.cg_tolerance(1.0):
     t_start = timer()
     
     output = model(x)
@@ -83,7 +84,7 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
 
 def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int = None, device: int = 0,
          epochs: int = 1000, lr: int = 1e-3, p_epochs: int = 200, lanc_iter: int = 100, pre_size: int = 100,
-         n_inducing: int = 500, nu: float = None, min_noise: float = 1e-4):
+         n_inducing: int = 512, nu: float = None, min_noise: float = 1e-4):
     wandb.init(config={
       'method': 'SGPR',
       'dataset': dataset,
@@ -131,11 +132,17 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
                          pre_size=pre_size, lanc_iter=lanc_iter)
 
         stopper(-val_dict['val/rmse'], dict(
-          state_dict=model.state_dict(), rmse=test_dict['test/rmse'], step=i + 1))
+          state_dict=model.state_dict(),
+          summary={
+            'test/best_rmse': test_dict['test/rmse'],
+            'test/best_nll': test_dict['test/nll'],
+            'val/best_step': i + 1
+          }
+        ))
         wandb.log(val_dict, step=i + 1)
         wandb.log(test_dict, step=i + 1)
-        wandb.run.summary['val/best_step'] = stopper.info().get('step')
-        wandb.run.summary['test/best_rmse'] = stopper.info().get('rmse')
+        for k, v in stopper.info().get('summary').items():
+          wandb.run.summary[k] = v
         torch.save(stopper.info().get('state_dict'), Path(wandb.run.dir) / 'model.pt')
 
         if stopper.is_done():
