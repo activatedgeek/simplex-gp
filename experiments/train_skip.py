@@ -30,14 +30,15 @@ class SKIPGPModel(gp.models.ExactGP):
         return gp.distributions.MultivariateNormal(mean_x, covar_x)
 
 
-def train(x, y, model, mll, optim, lanc_iter=100):
+def train(x, y, model, mll, optim, lanc_iter=100, pre_size=100):
   model.train()
 
   optim.zero_grad()
 
-  with gp.settings.max_root_decomposition_size(lanc_iter), \
+  with gp.settings.eval_cg_tolerance(1.0), \
        gp.settings.use_toeplitz(False), \
-       gp.settings.cg_tolerance(1.0):
+       gp.settings.max_preconditioner_size(pre_size), \
+       gp.settings.max_root_decomposition_size(lanc_iter):
     t_start = timer()
     
     output = model(x)
@@ -63,12 +64,11 @@ def train(x, y, model, mll, optim, lanc_iter=100):
 def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
   model.eval()
 
-  with torch.no_grad(), \
-       gp.settings.eval_cg_tolerance(1e-2), \
+  with gp.settings.eval_cg_tolerance(1e-2), \
+       gp.settings.use_toeplitz(False), \
        gp.settings.max_preconditioner_size(pre_size), \
        gp.settings.max_root_decomposition_size(lanc_iter), \
-       gp.settings.fast_pred_var(), \
-       gp.settings.use_toeplitz(False):
+       gp.settings.fast_pred_var(), torch.no_grad():
       t_start = timer()
     
       # pred_y = model.likelihood(model(x))
@@ -132,7 +132,7 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
     for i in tqdm(range(epochs)):
       with gp.settings.use_toeplitz(True):
         train_dict = train(train_x, train_y, model, mll, optimizer,
-                           lanc_iter=lanc_iter)
+                           lanc_iter=lanc_iter, pre_size=pre_size)
       wandb.log(train_dict, step=i + 1)
       
       if (i % log_int) == 0:
@@ -160,8 +160,8 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
         if stopper.is_done():
           break
 
-    wandb.run.summary['val/best_step'] = stopper.info().get('step')
-    wandb.run.summary['test/best_rmse'] = stopper.info().get('rmse')
+    for k, v in stopper.info().get('summary').items():
+      wandb.run.summary[k] = v
     torch.save(stopper.info().get('state_dict'), Path(wandb.run.dir) / 'model.pt')
 
 
