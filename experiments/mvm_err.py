@@ -1,7 +1,7 @@
 import os
 import torch
 import wandb
-# from timeit import default_timer as timer
+from timeit import default_timer as timer
 from gpytorch.kernels import RBFKernel, MaternKernel
 
 from bi_gp.bilateral_kernel import MaternLattice, RBFLattice
@@ -43,37 +43,46 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
 
     K_gt.lengthscale = K_lattice.lengthscale = ell
 
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-    start.record()
-    # start = timer()
+    if X.is_cuda:
+      start = torch.cuda.Event(enable_timing=True)
+      start.record()
+    else:
+      start = timer()
 
     mvm_gt = K_gt(X, X) @ y
 
-    # end = timer()
-    end.record()
-    torch.cuda.current_stream().synchronize()
+    if X.is_cuda:
+      end = torch.cuda.Event(enable_timing=True)
+      end.record()
+      torch.cuda.current_stream().synchronize()
+    else:
+      end = timer()
 
     ## To build cache
+    # mvm_lattice = K_lattice(X, X) @ y
+    # torch.cuda.current_stream().synchronize()
+
+    if X.is_cuda:
+      start2 = torch.cuda.Event(enable_timing=True)
+      start2.record()
+    else:
+      start2 = timer()
+
     mvm_lattice = K_lattice(X, X) @ y
-    torch.cuda.current_stream().synchronize()
 
-    start2 = torch.cuda.Event(enable_timing=True)
-    end2 = torch.cuda.Event(enable_timing=True)
-    start2.record()
-    # start2 = timer()
+    if X.is_cuda:
+      end2 = torch.cuda.Event(enable_timing=True)
+      end2.record()
+      torch.cuda.current_stream().synchronize()
+    else:
+      end2 = timer()
 
-    mvm_lattice = K_lattice(X, X) @ y
-
-    # end2 = timer()
-    end2.record()
-    torch.cuda.current_stream().synchronize()
-
-    # wandb.log({ 'ts/ref': end - start })
-    # wandb.log({ 'ts/lattice': end2 - start2 })
-
-    wandb.log({ 'ts/ref': start.elapsed_time(end) / 1000 })
-    wandb.log({ 'ts/lattice': start2.elapsed_time(end2) / 1000 })
+    if X.is_cuda:
+      wandb.log({ 'ts/ref': start.elapsed_time(end) / 1000 })
+      wandb.log({ 'ts/lattice': start2.elapsed_time(end2) / 1000 })
+    else:
+      wandb.log({ 'ts/ref': end - start })
+      wandb.log({ 'ts/lattice': end2 - start2 })
 
     err = rel_err(mvm_gt,mvm_lattice/(mvm_lattice/mvm_gt).mean())
 
