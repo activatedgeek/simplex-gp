@@ -18,7 +18,7 @@ def set_seeds(seed=None):
     torch.cuda.manual_seed_all(seed)
 
 
-def prepare_dataset(dataset, uci_data_dir, device=None):
+def prepare_dataset(dataset, uci_data_dir, device=None, train_val_split=0.8):
     if uci_data_dir is None and os.environ.get('DATADIR') is not None:
         uci_data_dir = Path(os.path.join(os.environ.get('DATADIR'), 'uci'))
 
@@ -26,7 +26,8 @@ def prepare_dataset(dataset, uci_data_dir, device=None):
 
     splits = {
         m: UCIDataset.create(dataset,
-            uci_data_dir=uci_data_dir, mode=m, device=device)
+            uci_data_dir=uci_data_dir, mode=m, device=device,
+            train_val_split=train_val_split)
         for m in ["train", "val", "test"]
     }
 
