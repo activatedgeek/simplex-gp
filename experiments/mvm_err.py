@@ -12,7 +12,7 @@ def rel_err(x,y):
     return ((x-y)**2).mean().sqrt()/((x**2).mean().sqrt()+(y**2).mean().sqrt())
 
 def main(dataset: str = None, data_dir: str = None, seed: int = None, device: int = 0,
-         nu: float = None, order: int = 1, ell: float = 1.0, n: int = None):
+         nu: float = None, order: int = 1, ell: float = 1.0, n_data: int = None):
     
     kern = 'rbf' if nu is None else 'mat'
     
@@ -22,6 +22,7 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
       'nu': nu,
       'order': order,
       'lengthscale': ell,
+      'n_data': n_data
     })
 
     set_seeds(seed)
@@ -29,8 +30,8 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
 
     data_iter = prepare_dataset(dataset, uci_data_dir=data_dir, device=device, train_val_split=1.0)
     _, X, y = next(data_iter)
-    if n is not None:
-      perm = torch.randperm(n)
+    if n_data is not None:
+      perm = torch.randperm(n_data)
       X, y = X[perm], y[perm]
 
     if kern == "rbf":
