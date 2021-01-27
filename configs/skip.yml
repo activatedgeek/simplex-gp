@@ -3,10 +3,10 @@ method: grid
 parameters:
   dataset:
     values:
-      - elevators_all
+      - elevators
       # - houseelectric
       - keggdirected
-      # - precipitation3d_all
+      - precipitation3d_all
       - protein
   epochs:
     value: 1000
@@ -26,7 +26,8 @@ parameters:
       - 10
   nu:
     values:
-      - 1.5
+      - None
+      # - 1.5
   seed:
     values:
       - -1

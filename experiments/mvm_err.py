@@ -12,7 +12,10 @@ def rel_err(x,y):
     return ((x-y)**2).mean().sqrt()/((x**2).mean().sqrt()+(y**2).mean().sqrt())
 
 def main(dataset: str = None, data_dir: str = None, seed: int = None, device: int = 0,
-         kern: str = None, nu: float = None, order: int = 1, ell: float = 1.0, n: int = None):
+         nu: float = None, order: int = 1, ell: float = 1.0, n: int = None):
+    
+    kern = 'rbf' if nu is None else 'mat'
+    
     wandb.init(config={
       'kernel': kern,
       'dataset': dataset,
@@ -20,8 +23,6 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
       'order': order,
       'lengthscale': ell,
     })
-
-    assert kern in ['rbf', 'mat'], "Invalid kernel"
 
     set_seeds(seed)
     device = f"cuda:{device}" if (device >= 0 and torch.cuda.is_available()) else "cpu"
@@ -78,15 +79,15 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
       end2 = timer()
 
     if X.is_cuda:
-      wandb.log({ 'ts/ref': start.elapsed_time(end) / 1000 })
-      wandb.log({ 'ts/lattice': start2.elapsed_time(end2) / 1000 })
+      t = start.elapsed_time(end) / 1000
+      t2 = start2.elapsed_time(end2) / 1000
     else:
-      wandb.log({ 'ts/ref': end - start })
-      wandb.log({ 'ts/lattice': end2 - start2 })
+      t = end - start
+      t2 = end2 - start2
 
     err = rel_err(mvm_gt,mvm_lattice/(mvm_lattice/mvm_gt).mean())
 
-    wandb.log({ 'err/rel_err': err })
+    wandb.log({ 'ts/ref': t, 'ts/lattice': t2, 'ts/rel': t2 / t, 'err/rel_err': err })
 
 
 if __name__ == "__main__":

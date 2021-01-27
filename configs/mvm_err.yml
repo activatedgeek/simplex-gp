@@ -1,4 +1,4 @@
-name: bgp
+name: mvm-err
 method: grid
 parameters:
   dataset:
@@ -8,40 +8,38 @@ parameters:
       - keggdirected
       - precipitation3d_all
       - protein
-  epochs:
-    value: 1000
-  p_epochs:
-    value: 200
-  lr:
-    values:
-      - 0.1
-  lanc_iter:
-    values:
-      - 100
-  pre_size:
-    values:
-      - 100
   nu:
     values:
       - None
       - 1.5
+      - 2.5
   order:
     values:
       - 1
       - 2
       - 3
-  min_noise:
+      - 4
+      - 5
+  ell:
     values:
-      - 0.0001
-      # - 0.001
-      # - 0.01
       - 0.1
-  # seed:
-  #   values:
-  #     - -1
-  #     - -2
-  #     - -3
-program: experiments/train_bigp.py
+      - 0.25
+      - 0.5
+      - 1.0
+      - 2.0
+  n:
+    values:
+      - None
+      - 1000
+      - 5000
+      - 10000
+      - 20000
+      - 30000
+      - 40000
+      - 50000
+      - 60000
+      - 100000
+program: experiments/mvm_err.py
 command:
   - ${env}
   - ${interpreter}
