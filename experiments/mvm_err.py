@@ -11,8 +11,34 @@ from utils import set_seeds, prepare_dataset
 def rel_err(x,y):
     return ((x-y)**2).mean().sqrt()/((x**2).mean().sqrt()+(y**2).mean().sqrt())
 
+
+def compute(K, X, y, n_iter=5):
+  if X.is_cuda:
+    start = torch.cuda.Event(enable_timing=True)
+    start.record()
+  else:
+    start = timer()
+  
+  for _ in range(n_iter):
+    mvm = K(X, X) @ y
+  
+  if X.is_cuda:
+    end = torch.cuda.Event(enable_timing=True)
+    end.record()
+    torch.cuda.synchronize()
+  else:
+    end = timer()
+
+  if X.is_cuda:
+    t = start.elapsed_time(end) / n_iter / 1000
+  else:
+    t = (end - start) / n_iter
+
+  return mvm, t
+
 def main(dataset: str = None, data_dir: str = None, seed: int = None, device: int = 0,
-         nu: float = None, order: int = 1, ell: float = 1.0, n_data: int = None):
+         nu: float = None, order: int = 1, ell: float = None, n_data: int = None,
+         n_iter: int = 5):
     
     kern = 'rbf' if nu is None else 'mat'
     
@@ -47,55 +73,20 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
     else:
       raise NotImplementedError
 
-    K_gt.lengthscale = K_lattice.lengthscale = ell
+    if ell is not None:
+      K_gt.lengthscale = K_lattice.lengthscale = ell
 
     print(f'Exact (n = {X.shape[0]})..')
-
-    if X.is_cuda:
-      start = torch.cuda.Event(enable_timing=True)
-      start.record()
-    else:
-      start = timer()
-
-    mvm_gt = K_gt(X, X) @ y
-
-    if X.is_cuda:
-      end = torch.cuda.Event(enable_timing=True)
-      end.record()
-      torch.cuda.current_stream().synchronize()
-    else:
-      end = timer()
-
+    compute(K_gt, X, y, n_iter=n_iter)  ## warm up cache
+    mvm_gt, t = compute(K_gt, X, y, n_iter=n_iter)
     print('..Done.')
+    torch.cuda.empty_cache()
+
     print(f'Lattice (n = {X.shape[0]})..')
-
-    ## To build cache
-    # mvm_lattice = K_lattice(X, X) @ y
-    # torch.cuda.current_stream().synchronize()
-
-    if X.is_cuda:
-      start2 = torch.cuda.Event(enable_timing=True)
-      start2.record()
-    else:
-      start2 = timer()
-
-    mvm_lattice = K_lattice(X, X) @ y
-
-    if X.is_cuda:
-      end2 = torch.cuda.Event(enable_timing=True)
-      end2.record()
-      torch.cuda.current_stream().synchronize()
-    else:
-      end2 = timer()
-
-    if X.is_cuda:
-      t = start.elapsed_time(end) / 1000
-      t2 = start2.elapsed_time(end2) / 1000
-    else:
-      t = end - start
-      t2 = end2 - start2
-
+    compute(K_lattice, X, y, n_iter=n_iter)  ## warm up cache
+    mvm_lattice, t2 = compute(K_lattice, X, y, n_iter=n_iter)
     print('..Done.')
+    torch.cuda.empty_cache()
 
     err = rel_err(mvm_gt,mvm_lattice/(mvm_lattice/mvm_gt).mean())
 
