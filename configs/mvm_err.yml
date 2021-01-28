@@ -20,25 +20,6 @@ parameters:
       - 3
       - 4
       - 5
-  ell:
-    values:
-      - 0.1
-      - 0.25
-      - 0.5
-      - 1.0
-      - 2.0
-  n_data:
-    values:
-      - None
-      - 1000
-      - 5000
-      - 10000
-      - 20000
-      - 30000
-      - 40000
-      - 50000
-      - 60000
-      - 100000
 program: experiments/mvm_err.py
 command:
   - ${env}

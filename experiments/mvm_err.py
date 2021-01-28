@@ -2,7 +2,7 @@ import os
 import torch
 import wandb
 from timeit import default_timer as timer
-from gpytorch.kernels import RBFKernel, MaternKernel
+from gpytorch.kernels.keops import RBFKernel, MaternKernel
 
 from bi_gp.bilateral_kernel import MaternLattice, RBFLattice
 from utils import set_seeds, prepare_dataset
@@ -22,7 +22,6 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
       'nu': nu,
       'order': order,
       'lengthscale': ell,
-      'n_data': n_data
     })
 
     set_seeds(seed)
@@ -34,6 +33,11 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
       perm = torch.randperm(n_data)
       X, y = X[perm], y[perm]
 
+    wandb.config.update({ 'n': X.shape[0] })
+
+    X = (X - X.mean(dim=0, keepdim=True)) / X.std(dim=0, keepdim=True)
+    y = (y - y.mean(dim=0, keepdim=True)) / y.std(dim=0, keepdim=True)
+
     if kern == "rbf":
       K_gt = RBFKernel().to(device)
       K_lattice = RBFLattice(order=order).to(device)
@@ -44,6 +48,8 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
       raise NotImplementedError
 
     K_gt.lengthscale = K_lattice.lengthscale = ell
+
+    print(f'Exact (n = {X.shape[0]})..')
 
     if X.is_cuda:
       start = torch.cuda.Event(enable_timing=True)
@@ -59,6 +65,9 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
       torch.cuda.current_stream().synchronize()
     else:
       end = timer()
+
+    print('..Done.')
+    print(f'Lattice (n = {X.shape[0]})..')
 
     ## To build cache
     # mvm_lattice = K_lattice(X, X) @ y
@@ -86,9 +95,12 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
       t = end - start
       t2 = end2 - start2
 
+    print('..Done.')
+
     err = rel_err(mvm_gt,mvm_lattice/(mvm_lattice/mvm_gt).mean())
 
-    wandb.log({ 'ts/ref': t, 'ts/lattice': t2, 'ts/rel': t2 / t, 'err/rel_err': err })
+    wandb.log({ 'ts/ref': t, 'ts/lattice': t2, 'ts/rel': (t2 - t) / t })
+    wandb.log({ 'err/rel_err': err })
 
 
 if __name__ == "__main__":
