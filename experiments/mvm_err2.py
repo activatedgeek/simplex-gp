@@ -35,7 +35,7 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
 
     data_iter = prepare_dataset(dataset, uci_data_dir=data_dir, device=device, train_val_split=1.0)
     _, X, y = next(data_iter)
-    if n_data is not None:
+    if n is not None:
       perm = torch.randperm(n_data)
       X, y = X[perm], y[perm]
 
