@@ -8,7 +8,7 @@ from utils import set_seeds, prepare_dataset
 from torch.utils.cpp_extension import load
 
 lattice = load(name="lattice",
-                  sources=[f"{os.path.expanduser("~/bilateral-gp/bi_gp/lattice.cpp")}"])		
+                  sources=[os.path.expanduser("~/bilateral-gp/bi_gp/lattice.cpp")])
 
 def rel_err(x,y):
     return ((x-y)**2).mean().sqrt()/((x**2).mean().sqrt()+(y**2).mean().sqrt())
