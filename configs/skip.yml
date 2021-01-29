@@ -1,4 +1,4 @@
-name: skip-m10
+name: skip-m100
 method: grid
 parameters:
   dataset:
@@ -18,12 +18,15 @@ parameters:
   lanc_iter:
     values:
       - 100
+      - 50
+      - 30
+      - 10
   pre_size:
     values:
       - 100
   grid_size:
     values:
-      - 10
+      - 100
   nu:
     values:
       - None

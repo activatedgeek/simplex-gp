@@ -37,7 +37,7 @@ def compute(K, X, y, n_iter=5):
   return mvm, t
 
 def main(dataset: str = None, data_dir: str = None, seed: int = None, device: int = 0,
-         nu: float = None, order: int = 1, ell: float = None, n_data: int = None,
+         nu: float = None, order: int = 1, ell: float = 1.0, n_data: int = None,
          n_iter: int = 5):
     
     kern = 'rbf' if nu is None else 'mat'

@@ -1,4 +1,4 @@
-name: bgp
+name: simplex-gp
 method: grid
 parameters:
   dataset:
@@ -18,18 +18,19 @@ parameters:
   lanc_iter:
     values:
       - 100
+      - 50
   pre_size:
     values:
       - 100
   nu:
     values:
       - None
-      - 1.5
+      # - 1.5
   order:
     values:
       - 1
-      - 2
-      - 3
+      # - 2
+      # - 3
   min_noise:
     values:
       - 0.0001
