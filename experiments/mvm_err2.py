@@ -3,7 +3,6 @@ import torch
 import wandb
 from timeit import default_timer as timer
 from gpytorch.kernels import RBFKernel, MaternKernel
-
 from bi_gp.bilateral_kernel import MaternLattice, RBFLattice
 from utils import set_seeds, prepare_dataset
 from torch.utils.cpp_extension import load
@@ -18,6 +17,9 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
          kern: str = 'rbf', nu: float = None, order: int = 1, ell: float = 1.0, n: int = None):
     dataset = 'protein' if dataset is None else dataset
     data_dir = "/home/marc_f/datasets/uci/protein" if data_dir is None else data_dir
+    
+    kern = 'rbf' if nu is None else 'mat'
+    
     wandb.init(config={
       'kernel': kern,
       'dataset': dataset,
@@ -33,10 +35,15 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
 
     data_iter = prepare_dataset(dataset, uci_data_dir=data_dir, device=device, train_val_split=1.0)
     _, X, y = next(data_iter)
-    if n is not None:
-      perm = torch.randperm(n)
+    if n_data is not None:
+      perm = torch.randperm(n_data)
       X, y = X[perm], y[perm]
-    print(X.shape)
+
+    wandb.config.update({ 'n': X.shape[0] })
+
+    X = (X - X.mean(dim=0, keepdim=True)) / X.std(dim=0, keepdim=True)
+    y = (y - y.mean(dim=0, keepdim=True)) / y.std(dim=0, keepdim=True)
+
     if kern == "rbf":
       K_gt = RBFKernel().to(device)
       K_lattice = RBFLattice(order=order).to(device)

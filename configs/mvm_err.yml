@@ -1,0 +1,29 @@
+name: mvm-err
+method: grid
+parameters:
+  dataset:
+    values:
+      - elevators
+      - houseelectric
+      - keggdirected
+      - precipitation3d_all
+      - protein
+  nu:
+    values:
+      - None
+      - 1.5
+      - 2.5
+  order:
+    value
+    s:
+      - 1
+      - 2
+      - 3
+      - 4
+      - 5
+program: experiments/mvm_err.py
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - ${args}
