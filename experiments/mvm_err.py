@@ -9,7 +9,11 @@ from utils import set_seeds, prepare_dataset
 
 
 def rel_err(x,y):
-    return ((x-y)**2).mean().sqrt()/((x**2).mean().sqrt()+(y**2).mean().sqrt())
+  return ((x-y)**2).mean().sqrt()/((x**2).mean().sqrt()+(y**2).mean().sqrt())
+
+
+def cos_err(x,y):
+  return (x * y).sum() / (x.norm(p=2) * y.norm(p=2))
 
 
 def compute(K, X, y, n_iter=5):
@@ -59,10 +63,12 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
       perm = torch.randperm(n_data)
       X, y = X[perm], y[perm]
 
-    wandb.config.update({ 'n': X.shape[0] })
-
     X = (X - X.mean(dim=0, keepdim=True)) / X.std(dim=0, keepdim=True)
     y = (y - y.mean(dim=0, keepdim=True)) / y.std(dim=0, keepdim=True)
+
+    # X, y = torch.randn(int(1e7), 20).to(device), torch.rand(int(1e7), 1).to(device)
+
+    wandb.config.update({ 'n': X.shape[0], 'd': X.shape[1] })
 
     if kern == "rbf":
       K_gt = RBFKernel().to(device)
@@ -76,22 +82,23 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
     if ell is not None:
       K_gt.lengthscale = K_lattice.lengthscale = ell
 
-    print(f'Exact (n = {X.shape[0]})..')
-    compute(K_gt, X, y, n_iter=n_iter)  ## warm up cache
-    mvm_gt, t = compute(K_gt, X, y, n_iter=n_iter)
-    print('..Done.')
-    torch.cuda.empty_cache()
-
-    print(f'Lattice (n = {X.shape[0]})..')
+    print(f'Lattice (n = {X.shape[0]}, d = {X.shape[1]})..')
     compute(K_lattice, X, y, n_iter=n_iter)  ## warm up cache
     mvm_lattice, t2 = compute(K_lattice, X, y, n_iter=n_iter)
     print('..Done.')
     torch.cuda.empty_cache()
 
+    print(f'Exact (n = {X.shape[0]}, d = {X.shape[1]})..')
+    compute(K_gt, X, y, n_iter=n_iter)  ## warm up cache
+    mvm_gt, t = compute(K_gt, X, y, n_iter=n_iter)
+    print('..Done.')
+    torch.cuda.empty_cache()
+
     err = rel_err(mvm_gt,mvm_lattice/(mvm_lattice/mvm_gt).mean())
+    c_err = cos_err(mvm_gt, mvm_lattice)
 
     wandb.log({ 'ts/ref': t, 'ts/lattice': t2, 'ts/rel': (t2 - t) / t })
-    wandb.log({ 'err/rel_err': err })
+    wandb.log({ 'err/rel_err': err, 'err/cos_err': c_err })
 
 
 if __name__ == "__main__":
