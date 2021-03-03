@@ -1,7 +1,9 @@
 name: bilateral-gp
 channels:
   - conda-forge
+  - anaconda
 dependencies:
+  - cmake
   - ninja
   - python
   - pip
