@@ -83,7 +83,7 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
 
 
 def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int = None, device: int = 0,
-         epochs: int = 1000, lr: int = 1e-3, p_epochs: int = 200, lanc_iter: int = 100, pre_size: int = 100,
+         epochs: int = 100, lr: int = 0.1, p_epochs: int = 200, lanc_iter: int = 100, pre_size: int = 100,
          nu: float = None, order: int = 1, min_noise: float = 1e-4):
     wandb.init(config={
       'method': 'BiGP',
