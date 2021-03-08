@@ -1,14 +1,14 @@
-name: simplex-gp
+name: keops
 method: grid
 parameters:
   dataset:
     values:
       - 3droad
-      # - elevators
+      - elevators
       - houseelectric
-      # - keggdirected
+      - keggdirected
       - precipitation3d_all
-      # - protein
+      - protein
   epochs:
     value: 100
   p_epochs:
@@ -24,14 +24,11 @@ parameters:
       - 100
   nu:
     values:
-      - None
       - 1.5
   min_noise:
     values:
       - 0.0001
-      # - 0.001
-      # - 0.01
-      - 0.1
+      # - 0.1
   # seed:
   #   values:
   #     - -1

@@ -4,11 +4,11 @@ parameters:
   dataset:
     values:
       - 3droad
-      # - elevators
+      - elevators
       - houseelectric
-      # - keggdirected
+      - keggdirected
       - precipitation3d_all
-      # - protein
+      - protein
   epochs:
     value: 100
   p_epochs:
@@ -19,14 +19,12 @@ parameters:
   lanc_iter:
     values:
       - 100
-      - 50
   pre_size:
     values:
       - 100
   nu:
     values:
-      - None
-      # - 1.5
+      - 1.5
   order:
     values:
       - 1
@@ -35,9 +33,7 @@ parameters:
   min_noise:
     values:
       - 0.0001
-      # - 0.001
-      # - 0.01
-      - 0.1
+      # - 0.1
   # seed:
   #   values:
   #     - -1
