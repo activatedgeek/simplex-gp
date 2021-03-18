@@ -140,6 +140,14 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
         ))
         wandb.log(val_dict, step=i + 1)
         wandb.log(test_dict, step=i + 1)
+        wandb.log({
+          'param/noise': model.likelihood.noise.item(),
+          'param/outputscale': model.covar_module.outputscale.item(),
+        }, step=i + 1)
+        for d in range(train_x.size(-1)):
+          wandb.log({
+            f'param/lengthscale/{d}': model.covar_module.base_kernel.lengthscale[0][d].item()
+          }, step=i + 1)
         for k, v in stopper.info().get('summary').items():
           wandb.run.summary[k] = v
         torch.save(stopper.info().get('state_dict'), Path(wandb.run.dir) / 'model.pt')
