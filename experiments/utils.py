@@ -41,7 +41,7 @@ def prepare_dataset(dataset, uci_data_dir, device=None, train_val_split=0.8):
         x = (splits.get(m).x - x_mean) / (x_std + 1e-6)
         y = (splits.get(m).y - y_mean) / (y_std + 1e-6)
 
-        yield m, x, y
+        yield m, x.contiguous(), y.contiguous()
 
 
 class UCIDataset(Dataset):

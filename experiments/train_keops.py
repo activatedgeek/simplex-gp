@@ -11,6 +11,8 @@ from utils import set_seeds, prepare_dataset, EarlyStopper
 
 class KeOpsModel(gp.models.ExactGP):
     def __init__(self, train_x, train_y, nu=None, min_noise=1e-4):
+        assert train_x.is_contiguous(), 'Need contiguous x for KeOps'
+
         likelihood = gp.likelihoods.GaussianLikelihood(
                       noise_constraint=gp.constraints.GreaterThan(min_noise))
         super().__init__(train_x, train_y, likelihood)
@@ -20,6 +22,8 @@ class KeOpsModel(gp.models.ExactGP):
         self.covar_module = gp.kernels.ScaleKernel(self.base_covar_module)
 
     def forward(self, x):
+        assert x.is_contiguous(), 'Need contiguous x for KeOps'
+
         mean_x = self.mean_module(x)
         covar_x = self.covar_module(x)
         return gp.distributions.MultivariateNormal(mean_x, covar_x)
@@ -151,6 +155,8 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
         for k, v in stopper.info().get('summary').items():
           wandb.run.summary[k] = v
         torch.save(stopper.info().get('state_dict'), Path(wandb.run.dir) / 'model.pt')
+
+        print(model.covar_module.base_kernel.lengthscale)
 
         if stopper.is_done():
           break
