@@ -157,8 +157,6 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
         torch.save(stopper.info().get('state_dict'), Path(wandb.run.dir) / 'model.pt')
         wandb.save('*.pt')
 
-        print(model.covar_module.base_kernel.lengthscale)
-
         if stopper.is_done():
           break
 
