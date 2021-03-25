@@ -156,6 +156,7 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
         for k, v in stopper.info().get('summary').items():
           wandb.run.summary[k] = v
         torch.save(stopper.info().get('state_dict'), Path(wandb.run.dir) / 'model.pt')
+        wandb.save('*.pt')
 
         if stopper.is_done():
           break
@@ -163,6 +164,7 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
     for k, v in stopper.info().get('summary').items():
       wandb.run.summary[k] = v
     torch.save(stopper.info().get('state_dict'), Path(wandb.run.dir) / 'model.pt')
+    wandb.save('*.pt')
 
 
 if __name__ == "__main__":
