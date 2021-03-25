@@ -30,7 +30,7 @@ def train(x, y, model, mll, optim, lanc_iter=100, pre_size=100):
 
   optim.zero_grad()
 
-  with gp.settings.eval_cg_tolerance(1.0), \
+  with gp.settings.cg_tolerance(1.0), \
        gp.settings.max_preconditioner_size(pre_size), \
        gp.settings.max_root_decomposition_size(lanc_iter):
     t_start = timer()

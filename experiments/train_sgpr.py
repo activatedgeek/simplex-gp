@@ -31,7 +31,7 @@ def train(x, y, model, mll, optim, lanc_iter=100, pre_size=100):
 
   optim.zero_grad()
 
-  with gp.settings.eval_cg_tolerance(1.0), \
+  with gp.settings.cg_tolerance(1.0), \
        gp.settings.max_preconditioner_size(pre_size), \
        gp.settings.max_root_decomposition_size(lanc_iter):
     t_start = timer()
@@ -71,19 +71,19 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, label='test'):
 
       rmse = (pred_y.mean - y).pow(2).mean(0).sqrt()
       mae = (pred_y.mean - y).abs().mean(0)
-      nll = - torch.distributions.Normal(pred_y.mean,
-        pred_y.variance.add(model.likelihood.noise).sqrt()).log_prob(y).mean()
+      # nll = - torch.distributions.Normal(pred_y.mean,
+      #   pred_y.variance.add(model.likelihood.noise).sqrt()).log_prob(y).mean()
 
   return {
     f'{label}/rmse': rmse.item(),
     f'{label}/mae': mae.item(),
     f'{label}/pred_ts': pred_ts,
-    f'{label}/nll': nll.item()
+    f'{label}/nll': 0.0# nll.item()
   }
 
 
 def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int = None, device: int = 0,
-         epochs: int = 1000, lr: int = 1e-3, p_epochs: int = 200, lanc_iter: int = 100, pre_size: int = 100,
+         epochs: int = 100, lr: int = 1e-3, p_epochs: int = 200, lanc_iter: int = 100, pre_size: int = 100,
          n_inducing: int = 512, nu: float = None, min_noise: float = 1e-4):
     wandb.init(config={
       'method': 'SGPR',
