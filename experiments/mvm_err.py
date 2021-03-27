@@ -63,9 +63,6 @@ def main(dataset: str = None, data_dir: str = None, seed: int = None, device: in
       perm = torch.randperm(n_data)
       X, y = X[perm], y[perm]
 
-    X = (X - X.mean(dim=0, keepdim=True)) / X.std(dim=0, keepdim=True)
-    y = (y - y.mean(dim=0, keepdim=True)) / y.std(dim=0, keepdim=True)
-
     # X, y = torch.randn(int(1e7), 20).to(device), torch.rand(int(1e7), 1).to(device)
 
     wandb.config.update({ 'n': X.shape[0], 'd': X.shape[1] })
