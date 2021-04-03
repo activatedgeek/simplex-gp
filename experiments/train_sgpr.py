@@ -8,6 +8,8 @@ from timeit import default_timer as timer
 
 from utils import set_seeds, prepare_dataset, EarlyStopper
 
+## Default to double.
+# torch.set_default_dtype(torch.float64)
 
 class SGPRModel(gp.models.ExactGP):
     def __init__(self, train_x, train_y, n_inducing=500, nu=None, min_noise=1e-4):
