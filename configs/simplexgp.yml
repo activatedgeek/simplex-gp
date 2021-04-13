@@ -16,6 +16,10 @@ parameters:
   lr:
     values:
       - 0.1
+  cg_iter:
+    values:
+      - 500
+      # - 1000
   lanc_iter:
     values:
       - 100
@@ -32,8 +36,8 @@ parameters:
       # - 3
   min_noise:
     values:
-      - 0.0001
-      # - 0.1
+      # - 0.0001
+      - 0.1
   # seed:
   #   values:
   #     - -1
