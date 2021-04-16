@@ -26,12 +26,12 @@ class BilateralGPModel(gp.models.ExactGP):
         return gp.distributions.MultivariateNormal(mean_x, covar_x)
 
 
-def train(x, y, model, mll, optim, lanc_iter=100, cg_iter=1000, pre_size=100):
+def train(x, y, model, mll, optim, lanc_iter=100, cg_iter=1000, pre_size=100, cg_tol=1.0):
   model.train()
 
   optim.zero_grad()
 
-  with gp.settings.cg_tolerance(1.0), \
+  with gp.settings.cg_tolerance(cg_tol), \
        gp.settings.max_cg_iterations(cg_iter), \
        gp.settings.max_preconditioner_size(pre_size), \
        gp.settings.max_root_decomposition_size(lanc_iter):
@@ -57,10 +57,10 @@ def train(x, y, model, mll, optim, lanc_iter=100, cg_iter=1000, pre_size=100):
   }
 
 
-def test(x, y, model, mll, lanc_iter=100, pre_size=100, cg_iter=1000, label='test'):
+def test(x, y, model, mll, lanc_iter=100, pre_size=100, cg_iter=1000, cg_tol=1e-2, label='test'):
   model.eval()
 
-  with gp.settings.eval_cg_tolerance(1e-2), \
+  with gp.settings.eval_cg_tolerance(cg_tol), \
        gp.settings.max_cg_iterations(cg_iter), \
        gp.settings.max_preconditioner_size(pre_size), \
        gp.settings.max_root_decomposition_size(lanc_iter), \
@@ -86,9 +86,10 @@ def test(x, y, model, mll, lanc_iter=100, pre_size=100, cg_iter=1000, label='tes
 
 def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int = None, device: int = 0,
          epochs: int = 100, lr: int = 0.1, p_epochs: int = 200, lanc_iter: int = 100, pre_size: int = 100,
-         cg_iter: int = 1000, nu: float = None, order: int = 1, min_noise: float = 1e-4):
+         cg_iter: int = 1000, cg_tol: float = 1.0, cg_eval_tol: float = 1e-2, nu: float = None,
+         order: int = 1, min_noise: float = 1e-4):
     wandb.init(config={
-      'method': 'BiGP',
+      'method': 'Simplex-GP',
       'dataset': dataset,
       'lr': lr,
       'lanc_iter': lanc_iter,
@@ -121,16 +122,16 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
 
     for i in tqdm(range(epochs)):
       train_dict = train(train_x, train_y, model, mll, optimizer,
-                         lanc_iter=lanc_iter, pre_size=pre_size, cg_iter=cg_iter)
+                         lanc_iter=lanc_iter, pre_size=pre_size, cg_iter=cg_iter, cg_tol=cg_tol)
       wandb.log(train_dict, step=i + 1)
       
       if (i % log_int) == 0:
         val_dict = test(val_x, val_y, model, mll,
-                        pre_size=pre_size, lanc_iter=lanc_iter, cg_iter=cg_iter,
+                        pre_size=pre_size, lanc_iter=lanc_iter, cg_iter=cg_iter, cg_tol=cg_eval_tol,
                         label='val')
 
         test_dict = test(test_x, test_y, model, mll,
-                         pre_size=pre_size, lanc_iter=lanc_iter, cg_iter=cg_iter)
+                         pre_size=pre_size, lanc_iter=lanc_iter, cg_iter=cg_iter, cg_tol=cg_eval_tol)
 
         stopper(-val_dict['val/rmse'], dict(
           state_dict=model.state_dict(),
