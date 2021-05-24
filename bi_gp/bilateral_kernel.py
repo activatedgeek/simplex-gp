@@ -1,16 +1,128 @@
 
-import torch
-from gpytorch.kernels import Kernel
-from gpytorch.lazy import LazyTensor
+import os
+from functools import partial
+import numpy as np
 import torch
 import torch.nn as nn
-import time
-import numpy as np
-import math
-import gpytorch
-from functools import partial
-from bi_gp.gaussian_matrix import LatticeFilterGeneral
-from bi_gp.discretized_coefficients import get_coeffs
+from torch.autograd import Function
+from torch.utils.cpp_extension import load
+from gpytorch.kernels import Kernel
+from gpytorch.lazy import LazyTensor
+import logging
+
+
+def get_coeffs(kernel_fn,order):
+    """ Given a raw stationary and isotropic kernel function (R -> R),
+        computes the optimal discrete filter coefficients to a fixed order
+        by matching the coverage in spatial domain (from the highest and lowest samples)
+        with the coverage in the frequency domain (from the nyquist frequency)."""
+    N = 10**4
+    x = np.linspace(-30,30,N)
+    fn_values = kernel_fn(torch.from_numpy(x).float()).cpu().data.numpy()
+    w = 2*np.pi*np.fft.fftfreq(N,60/N)
+    fft_values = np.absolute(np.fft.fft(fn_values)/(2*np.pi*np.sqrt(N)))
+    
+    obj_fn = partial(coverage_diff,order=order,x=x,w=w,fn_values=fn_values,fft_values=fft_values)
+    s = binary_search(0,(.1,9),obj_fn,1e-4) # Search for zeros of objective function (up to 1e-4 precision)
+    vals = kernel_fn(s*torch.arange(-order,order+1).float())
+    return vals/vals[order]
+
+def coverage_diff(spacing,order,x,w,fn_values,fft_values):
+    """ Given sample spacing and filter order, compute the difference in coverage over
+        spatial and frequency domains. """
+    k = 2*order+1
+    a = spacing*k/2
+    nyquist_w = np.pi/spacing
+    spatial_coverage = fn_values[(-a<=x)&(x<=a)].sum()/fn_values.sum() #(dx's cancel)
+    spectral_coverage = fft_values[(-nyquist_w<=w)&(w<=nyquist_w)].sum()/fft_values.sum() #(dw's cancel)
+    logging.info(f"cov: x {spatial_coverage:.2f} w {spectral_coverage:.2f}")
+    return spatial_coverage-spectral_coverage
+
+def binary_search(target,bounds,fn,eps=1e-2):
+    """ Perform binary search to find the input corresponding to the target output
+        of a given monotonic function fn up to the eps precision. Requires initial bounds
+        (lower,upper) on the values of x."""
+    lb,ub = bounds
+    i = 0
+    while ub-lb>eps:
+        guess = (ub+lb)/2
+        y = fn(guess)
+        if y<target:
+            lb = guess
+        elif y>=target:
+            ub = guess
+        i+=1
+        if i>500: assert False
+    return (ub+lb)/2
+
+
+class LatticeFilterGeneral(Function):
+    method = None
+
+    @staticmethod
+    def lazy_compile(is_cuda):
+        if is_cuda:
+            LatticeFilterGeneral.method = load(name="gpu_lattice", verbose=True,
+                sources=[
+                    os.path.join(os.path.dirname(__file__), 'lib', 'permutohedral_cuda.cpp'),
+                    os.path.join(os.path.dirname(__file__), 'lib', 'permutohedral_cuda_kernel.cu')
+                ]).filter
+        else:
+            LatticeFilterGeneral.method = load(name="cpu_lattice", verbose=True,
+                sources=[
+                    os.path.join(os.path.dirname(__file__), 'lattice.cpp')
+                ]).filter
+        
+    @staticmethod
+    def forward(ctx, source, reference,kernel_fn):
+        if LatticeFilterGeneral.method is None:
+            LatticeFilterGeneral.lazy_compile(source.is_cuda)
+
+        #W = torch.exp(-((reference[None,:,:] - reference[:,None,:])**2).sum(-1)).double()
+        #ctx.W = W
+        # Typical runtime of O(nd^2 + n*L), Worst case O(nd^2 + n*L*d)
+        assert source.shape[0] == reference.shape[0], \
+            "Incompatible shapes {}, and {}".format(source.shape,reference.shape)
+        coeffs = kernel_fn.get_coeffs().to(source.device)
+        if any(ctx.needs_input_grad):
+            ctx.save_for_backward(source,reference) # TODO: add batch compatibility
+            # ctx.gpu = source.is_cuda
+            ctx.kernel_fn= kernel_fn
+            ctx.coeffs = coeffs
+            ctx.deriv_coeffs = ctx.kernel_fn.get_deriv_coeffs().to(source.device)
+        # filtermethod = gpulattice if source.is_cuda else cpulattice
+        filtermethod = LatticeFilterGeneral.method
+        filtered_output = filtermethod(source,reference.contiguous(),coeffs)
+        return filtered_output
+    @staticmethod
+    def backward(ctx,grad_output):
+        assert LatticeFilterGeneral.method is not None
+        # Typical runtime of O(nd^2 + 2L*n*d), Worst case  O(nd^2 + 2L*n*d^2)
+        # Does not support second order autograd at the moment
+        # filtermethod = gpulattice if ctx.gpu else cpulattice
+        filtermethod = LatticeFilterGeneral.method
+        with torch.no_grad():
+            src, ref = ctx.saved_tensors
+            g = grad_output
+            n,L = src.shape[-2:]
+            d = ref.shape[-1]
+            grad_source = grad_reference = None
+            if ctx.needs_input_grad[0] and not ctx.needs_input_grad[1]:
+                grad_source = filtermethod(g,ref,ctx.coeffs)#ctx.W@g#latticefilter(g,ref) # Matrix is symmetric
+            if ctx.needs_input_grad[1]: # try torch.no_grad ()
+                gf = grad_and_ref = grad_output[...,None]*ref[...,None,:] # n x L x d
+                grad_and_ref_flat = grad_and_ref.view(grad_and_ref.shape[:-2]+(L*d,))
+                sf = src_and_ref = src[...,None]*ref[...,None,:] # n x L x d
+                src_and_ref_flat = src_and_ref.view(src_and_ref.shape[:-2]+(L*d,))
+                #n x (L+Ld+L+Ld):   n x L       n x Ld     n x L   n x Ld 
+                all_ = torch.cat([g,grad_and_ref_flat,src,src_and_ref_flat],dim=-1)
+                filtered_all = filtermethod(all_,ref.contiguous(),ctx.deriv_coeffs)#ctx.W@all_#torch.randn_like(all_)#
+                [wg,wgf,ws,wsf] = torch.split(filtered_all,[L,L*d,L,L*d],dim=-1)
+                # has shape n x d 
+                grad_reference = -2*(sf*wg[...,None] - src[...,None]*wgf.view(-1,L,d) + gf*ws[...,None] - g[...,None]*wsf.view(-1,L,d)).sum(-2) # sum over L dimension
+                if ctx.needs_input_grad[0]: grad_source = wg
+        return grad_source, grad_reference,None
+
 
 class SquareLazyLattice(LazyTensor):
     def __init__(self,x,dkernel=None):

@@ -6,7 +6,7 @@ import wandb
 from pathlib import Path
 from timeit import default_timer as timer
 
-from bi_gp.bilateral_kernel import BilateralKernel, MaternLattice, RBFLattice
+from bi_gp import MaternLattice, RBFLattice
 from utils import set_seeds, prepare_dataset, EarlyStopper
 
 

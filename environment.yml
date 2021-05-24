@@ -17,7 +17,7 @@ dependencies:
     - numpy
     - scipy
     - pandas
-    - 'torch<1.8'
+    - torch
     - scikit-learn
     - gpytorch
     - wandb
