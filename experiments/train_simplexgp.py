@@ -6,11 +6,11 @@ import wandb
 from pathlib import Path
 from timeit import default_timer as timer
 
-from bi_gp import MaternLattice, RBFLattice
+from gpytorch_lattice_kernel import MaternLattice, RBFLattice
 from utils import set_seeds, prepare_dataset, EarlyStopper
 
 
-class BilateralGPModel(gp.models.ExactGP):
+class SimplexGPModel(gp.models.ExactGP):
     def __init__(self, train_x, train_y, nu=None, order=1, min_noise=1e-4):
         likelihood = gp.likelihoods.GaussianLikelihood(
                       noise_constraint=gp.constraints.GreaterThan(min_noise))
@@ -114,7 +114,7 @@ def main(dataset: str = None, data_dir: str = None, log_int: int = 1, seed: int 
       'N_val': val_x.size(0)
     })
 
-    model = BilateralGPModel(train_x, train_y, nu=nu, order=order, min_noise=min_noise).to(device)
+    model = SimplexGPModel(train_x, train_y, nu=nu, order=order, min_noise=min_noise).to(device)
     mll = gp.mlls.ExactMarginalLogLikelihood(model.likelihood, model)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)

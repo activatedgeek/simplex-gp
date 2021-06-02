@@ -4,7 +4,7 @@ import wandb
 from timeit import default_timer as timer
 from gpytorch.kernels.keops import RBFKernel, MaternKernel
 
-from bi_gp.bilateral_kernel import MaternLattice, RBFLattice
+from gpytorch_lattice_kernel import MaternLattice, RBFLattice
 from utils import set_seeds, prepare_dataset
 
 

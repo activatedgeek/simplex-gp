@@ -1,0 +1,1 @@
+include gpytorch_lattice_kernel/lib/* LICENSE README.md

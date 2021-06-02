@@ -1,4 +1,0 @@
-[default]
-entity = gausspr
-project = simplex-gp
-base_url = https://api.wandb.ai

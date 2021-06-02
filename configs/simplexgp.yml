@@ -19,7 +19,12 @@ parameters:
   cg_iter:
     values:
       - 500
-      # - 1000
+  cg_tol:
+    values:
+      - 1.
+  cg_eval_tol:
+    values:
+      - 1e-2
   lanc_iter:
     values:
       - 100

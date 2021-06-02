@@ -16,7 +16,7 @@ def test_cpu(src, ref, cdebug=False):
   cpu_lattice = load(name=f'cpu_lattice{"_debug" if cdebug else ""}',
                      verbose=cdebug,
                      extra_cflags=['-DDEBUG'] if cdebug else None,
-                     sources=[(root / 'bi_gp' / 'lattice.cpp')])
+                     sources=[(root / 'gpytorch_lattice_kernel' / 'lib' / 'lattice.cpp')])
 
   start = timer()
 
@@ -39,8 +39,8 @@ def test_gpu(src, ref, cdebug=False):
                      extra_cflags=['-DDEBUG'] if cdebug else None,
                      extra_cuda_cflags=['-DDEBUG'] if cdebug else None,
                      sources=[
-                       (root / 'bi_gp' / 'cuda' / 'permutohedral_cuda.cpp'),
-                       (root / 'bi_gp' / 'cuda' /'permutohedral_cuda_kernel.cu')
+                       (root / 'gpytorch_lattice_kernel' / 'lib' / 'permutohedral_cuda.cpp'),
+                       (root / 'gpytorch_lattice_kernel' / 'lib' /'permutohedral_cuda_kernel.cu')
                      ])
 
   start = timer()
