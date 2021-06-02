@@ -1,6 +1,6 @@
 # Simplex-GPs
 
-<!-- ![](https://img.shields.io/badge/arXiv-yyyy.xxxx-red) -->
+![](https://img.shields.io/badge/arXiv-2021.xxxx-red)
 ![](https://img.shields.io/badge/ICML-2021-brightgreen)
 
 This repository hosts the code for [_SKIing on Simplices: Kernel Interpolation on the Permutohedral Lattice for Scalable Gaussian Processes_](#) (Simplex-GPs) by 
