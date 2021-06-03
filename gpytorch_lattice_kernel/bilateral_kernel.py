@@ -70,7 +70,7 @@ class LatticeFilterGeneral(Function):
         else:
             LatticeFilterGeneral.method = load(name="cpu_lattice", verbose=True,
                 sources=[
-                    os.path.join(os.path.dirname(__file__), 'lattice.cpp')
+                    os.path.join(os.path.dirname(__file__), 'lib', 'lattice.cpp')
                 ]).filter
         
     @staticmethod

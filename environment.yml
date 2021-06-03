@@ -1,4 +1,4 @@
-name: bilateral-gp
+name: simplex-gp
 channels:
   - conda-forge
   - anaconda

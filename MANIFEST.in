@@ -1,1 +1,3 @@
-include gpytorch_lattice_kernel/lib/* LICENSE README.md
+include LICENSE README.md
+include gpytorch_lattice_kernel/lib/permutohedral.h gpytorch_lattice_kernel/lib/lattice.cpp
+include gpytorch_lattice_kernel/lib/permutohedral_cuda_kernel.cu gpytorch_lattice_kernel/lib/permutohedral_cuda.cpp

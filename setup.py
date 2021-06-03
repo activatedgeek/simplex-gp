@@ -26,7 +26,10 @@ setup(
     'experiments.*',
     'notebooks',
     'notebooks.*',
+    'tests',
+    'tests.*',
   ]),
+  include_package_data=True,
   python_requires='>=3.6, <4',
   install_requires=['numpy', 'torch', 'gpytorch'],
   extras_require={})
