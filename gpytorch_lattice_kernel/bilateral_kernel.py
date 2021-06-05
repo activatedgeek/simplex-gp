@@ -64,13 +64,13 @@ class LatticeFilterGeneral(Function):
         if is_cuda:
             LatticeFilterGeneral.method = load(name="gpu_lattice", verbose=True,
                 sources=[
-                    os.path.join(os.path.dirname(__file__), 'lib', 'permutohedral_cuda.cpp'),
-                    os.path.join(os.path.dirname(__file__), 'lib', 'permutohedral_cuda_kernel.cu')
+                    os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda.cpp'),
+                    os.path.join(os.path.dirname(__file__), 'cuda', 'permutohedral_cuda_kernel.cu')
                 ]).filter
         else:
             LatticeFilterGeneral.method = load(name="cpu_lattice", verbose=True,
                 sources=[
-                    os.path.join(os.path.dirname(__file__), 'lib', 'lattice.cpp')
+                    os.path.join(os.path.dirname(__file__), 'cpp', 'lattice.cpp')
                 ]).filter
         
     @staticmethod

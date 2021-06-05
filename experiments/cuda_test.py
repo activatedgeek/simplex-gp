@@ -16,7 +16,7 @@ def test_cpu(src, ref, cdebug=False):
   cpu_lattice = load(name=f'cpu_lattice{"_debug" if cdebug else ""}',
                      verbose=cdebug,
                      extra_cflags=['-DDEBUG'] if cdebug else None,
-                     sources=[(root / 'gpytorch_lattice_kernel' / 'lib' / 'lattice.cpp')])
+                     sources=[(root / 'gpytorch_lattice_kernel' / 'cpp' / 'lattice.cpp')])
 
   start = timer()
 
