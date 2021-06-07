@@ -1,7 +1,8 @@
 # Simplex-GPs
 
-![](https://img.shields.io/badge/arXiv-2021.xxxx-red)
-![](https://img.shields.io/badge/ICML-2021-brightgreen)
+[![PyPI version](https://badge.fury.io/py/gpytorch-lattice-kernel.svg)](https://pypi.org/project/gpytorch-lattice-kernel/)
+[![](https://img.shields.io/badge/arXiv-2021.xxxx-red)](https://u.perhapsbay.es/simplex-gp-arxiv)
+[![](https://img.shields.io/badge/ICML-2021-brightgreen)](https://u.perhapsbay.es/simplex-gp)
 
 This repository hosts the code for [_SKIing on Simplices: Kernel Interpolation on the Permutohedral Lattice for Scalable Gaussian Processes_](#) (Simplex-GPs) by 
 [Sanyam Kapoor](https://im.perhapsbay.es), [Marc Finzi](https://mfinzi.github.io),
