@@ -10,11 +10,12 @@ This repository hosts the code for [_SKIing on Simplices: Kernel Interpolation o
 
 ## The Idea
 
-Building upon the approximation proposed by 
+Fast matrix-vector multiplies (MVMs) are the cornerstone of modern scalable 
+Gaussian processes. By building upon the approximation proposed by 
 [Structured Kernel Interpolation](http://proceedings.mlr.press/v37/wilson15.pdf) (SKI),
+and leveraging advances in fast high-dimensional image filtering,
 Simplex-GPs approximate the computation of the kernel matrices by tiling the 
-space using a [sparse permutohedral lattice](http://graphics.stanford.edu/papers/permutohedral/), 
-instead of a rectangular grid.
+space using a [sparse permutohedral lattice](http://graphics.stanford.edu/papers/permutohedral/), instead of a rectangular grid.
 
 ![](https://i.imgur.com/rLJOe5g.png)
 
@@ -120,3 +121,7 @@ All arguments of the `main` function are therefore valid arguments to the CLI.
 All figures in the paper can be reproduced via [notebooks](./notebooks).
 
 **NOTE**: The UCI dataset `mat` files are available [here](https://cims.nyu.edu/~andrewgw/pattern/).
+
+## License
+
+Apache 2.0

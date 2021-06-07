@@ -1,6 +1,10 @@
+import os
 from setuptools import setup, find_packages
 
-VERSION = '0.0.dev0'
+VERSION = os.environ.get('GITHUB_REF', '0.0.dev0')
+if VERSION.startswith('refs/tags'):
+  VERSION = VERSION.split('/')[-1]
+
 with open('README.md') as f:
   README = f.read()
 
@@ -10,7 +14,7 @@ setup(
   long_description=README,
   long_description_content_type='text/markdown',
   version=VERSION,
-  url='https://github.com/mfinzi/simplex-gp',
+  url='https://github.com/activatedgeek/simplex-gp',
   license='Apache License 2.0',
   classifiers=[
     'Intended Audience :: Developers',
