@@ -4,7 +4,7 @@
 [![](https://img.shields.io/badge/arXiv-2021.xxxx-red)](https://u.perhapsbay.es/simplex-gp-arxiv)
 [![](https://img.shields.io/badge/ICML-2021-brightgreen)](https://u.perhapsbay.es/simplex-gp)
 
-This repository hosts the code for [_SKIing on Simplices: Kernel Interpolation on the Permutohedral Lattice for Scalable Gaussian Processes_](#) (Simplex-GPs) by 
+This repository hosts the code for [_SKIing on Simplices: Kernel Interpolation on the Permutohedral Lattice for Scalable Gaussian Processes_](https://u.perhapsbay.es/simplex-gp) (Simplex-GPs) by 
 [Sanyam Kapoor](https://im.perhapsbay.es), [Marc Finzi](https://mfinzi.github.io),
 [Ke Alexander Wang](https://keawang.github.io), 
 [Andrew Gordon Wilson](https://cims.nyu.edu/~andrewgw/).
