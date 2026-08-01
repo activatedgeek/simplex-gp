@@ -126,14 +126,17 @@ class LatticeFilterGeneral(Function):
 
 class SquareLazyLattice(LazyTensor):
     def __init__(self,x,dkernel=None):
-        super().__init__(x,dkernel=dkernel)
+        super().__init__(x)
         self.x = x
         self.dkernel=dkernel
 
     def _matmul(self,V):
-        return LatticeFilterGeneral.apply(V,self.x,self.dkernel)
+        batch_shape = V.shape[:-2]
+        V_flat = V.reshape(-1, V.shape[-1])
+        res = LatticeFilterGeneral.apply(V_flat,self.x,self.dkernel)
+        return res.reshape(*batch_shape, res.shape[-2], res.shape[-1])
     def _size(self):
-        return torch.Size((self.x.shape[-2],self.x.shape[-2]))
+        return torch.Size((*self.x.shape[:-2], self.x.shape[-2], self.x.shape[-2]))
     def _transpose_nonbatch(self):
         return self
     def diag(self):
@@ -141,21 +144,24 @@ class SquareLazyLattice(LazyTensor):
 
 class RectangularLazyLattice(LazyTensor):
     def __init__(self,xin,xout,dkernel=None):
-        super().__init__(xin, xout,dkernel=dkernel)
+        super().__init__(xin)
         self.xin = xin
         self.xout = xout
         self.dkernel=dkernel
         self._use_gpu=False
 
     def _matmul(self,V):
-        n = V.shape[-2]
-        assert n==self.xout.shape[-2], f"mismatched shapes? {V.shape,self.xout.shape}"
+        batch_shape = V.shape[:-2]
+        V_flat = V.reshape(-1, V.shape[-1])
+        n = V_flat.shape[-2]
+        assert n==self.xout.shape[-2], f"mismatched shapes? {V.shape}, self.xout.shape={self.xout.shape}"
         x_large = torch.cat([self.xout,self.xin],dim=-2)
-        V_large = torch.zeros(*V.shape[:-2],x_large.shape[-2],V.shape[-1],device=V.device,dtype=V.dtype)
-        V_large[...,:n,:] += V
-        return LatticeFilterGeneral.apply(V_large,x_large,self.dkernel)[...,n:,:]
+        V_large = torch.zeros(*V_flat.shape[:-2],x_large.shape[-2],V_flat.shape[-1],device=V_flat.device,dtype=V_flat.dtype)
+        V_large[...,:n,:] += V_flat
+        res = LatticeFilterGeneral.apply(V_large,x_large,self.dkernel)[...,n:,:]
+        return res.reshape(*batch_shape, res.shape[-2], res.shape[-1])
     def _size(self):
-        return torch.Size((*self.xin.shape[:-1],self.xout.shape[-2]))
+        return torch.Size((*self.xin.shape[:-2], self.xout.shape[-2], self.xin.shape[-2]))
     def _transpose_nonbatch(self):
         return RectangularLazyLattice(self.xout,self.xin,self.dkernel)
 
